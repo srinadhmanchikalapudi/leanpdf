@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LeanPDF</title>
+    <style>
+      /* Shown instantly, before the stylesheet bundle: matches the app's theme so nothing flashes. */
+      html, body { background: #f5f6f8; margin: 0; }
+      @media (prefers-color-scheme: dark) { html, body { background: #1b1d21; } }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div class="side-head">
+          <button id="choose-folder" class="folder-btn" title="Choose the folder to search">
+            <span class="folder-ico">▸</span>
+            <span id="folder-name">Choose a folder…</span>
+          </button>
+          <button id="rescan" class="icon-btn" title="Rescan folder for new or changed PDFs">↻</button>
+        </div>
+        <div class="searchbox">
+          <input id="q" type="search" placeholder="Search inside all PDFs   (Ctrl+K)" autocomplete="off" spellcheck="false" />
+        </div>
+        <div id="status"></div>
+        <div id="results"></div>
+      </aside>
+
+      <main id="main">
+        <div id="toolbar">
+          <button id="toggle-side" class="icon-btn" title="Show / hide sidebar (Ctrl+B)">☰</button>
+          <button id="open-file" class="btn" title="Open a PDF (Ctrl+O)">Open…</button>
+          <span class="sep"></span>
+          <button id="prev-pdf" class="btn" title="Previous PDF in folder (Alt+←)">‹ Prev</button>
+          <button id="next-pdf" class="btn" title="Next PDF in folder (Alt+→)">Next ›</button>
+          <span id="doc-title" class="doc-title"></span>
+          <span class="spacer"></span>
+          <span class="pager">
+            <input id="page-input" type="text" inputmode="numeric" value="" aria-label="Page" />
+            <span id="page-total">/ –</span>
+          </span>
+          <span class="sep"></span>
+          <button id="zoom-out" class="icon-btn" title="Zoom out (Ctrl+−)">−</button>
+          <span id="zoom-label" class="zoom-label">100%</span>
+          <button id="zoom-in" class="icon-btn" title="Zoom in (Ctrl++)">+</button>
+          <button id="zoom-fit" class="btn" title="Fit to width (Ctrl+0)">Fit</button>
+          <span class="sep"></span>
+          <button id="tool-note" class="btn" title="Place a sticky note (N)">+ Note</button>
+          <span id="save-state" class="save-state"></span>
+          <button id="toggle-comments" class="btn" title="Comments in this PDF">Comments <span id="comment-count" class="badge">0</span></button>
+        </div>
+        <div id="body">
+          <div id="scroller" tabindex="0">
+            <div id="empty" class="empty"></div>
+            <div id="pages"></div>
+          </div>
+          <aside id="comments" hidden>
+            <div class="panel-head">Comments</div>
+            <div id="comment-list"></div>
+          </aside>
+        </div>
+      </main>
+    </div>
+    <div id="seltool" hidden>
+      <button class="dot" data-color="0" title="Highlight yellow" style="background:#ffe14d"></button>
+      <button class="dot" data-color="1" title="Highlight green" style="background:#7be06b"></button>
+      <button class="dot" data-color="2" title="Highlight blue" style="background:#6bc4ff"></button>
+      <button class="dot" data-color="3" title="Highlight pink" style="background:#ff8fb8"></button>
+      <span class="sep"></span>
+      <button data-act="underline" title="Underline"><u>U</u></button>
+      <button data-act="strikeout" title="Strike through"><s>S</s></button>
+      <button data-act="comment" title="Highlight and add a comment">Comment</button>
+      <button data-act="copy" title="Copy text (Ctrl+C)">Copy</button>
+    </div>
+    <div id="noteeditor" hidden>
+      <textarea id="note-text" rows="4" placeholder="Type your comment…"></textarea>
+      <div class="note-actions">
+        <span class="hint">Ctrl+Enter to save</span>
+        <button id="note-cancel" class="btn">Cancel</button>
+        <button id="note-save" class="btn primary">Save</button>
+      </div>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

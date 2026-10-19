@@ -1,0 +1,40 @@
+name: CI
+
+# Builds and tests every push to main and every pull request. Windows only: the app loads pdfium.dll and uses Win32.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            native
+            src-tauri
+
+      - name: Test the core
+        run: cargo test --manifest-path core/Cargo.toml
+
+      - name: Test and build the native app
+        run: |
+          cargo test --manifest-path native/Cargo.toml
+          cargo build --release --manifest-path native/Cargo.toml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Web-view app (type-check, bundle, compile check)
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          cargo check --manifest-path src-tauri/Cargo.toml
