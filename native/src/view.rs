@@ -69,10 +69,10 @@ impl App {
                 self.open_dialog();
             }
             ui.separator();
-            if ui.add_enabled(can_prev, egui::Button::new("‹ Prev")).on_hover_text("Previous PDF in folder (Alt+←)").clicked() {
+            if ui.add_enabled(can_prev, egui::Button::new("‹ Prev")).on_hover_text("Previous PDF in folder (Alt+Left)").clicked() {
                 self.step_file(-1);
             }
-            if ui.add_enabled(can_next, egui::Button::new("Next ›")).on_hover_text("Next PDF in folder (Alt+→)").clicked() {
+            if ui.add_enabled(can_next, egui::Button::new("Next ›")).on_hover_text("Next PDF in folder (Alt+Right)").clicked() {
                 self.step_file(1);
             }
             if let Some(d) = &self.doc {
@@ -455,11 +455,9 @@ impl App {
     }
 
     pub fn finish_find(&mut self, res: Result<Vec<Rect4>, String>, doc: u32, page: usize) {
-        let Some(d) = &mut self.doc else { return };
-        if d.id == doc {
-            if let Ok(r) = res {
-                d.found.insert(page, r);
-            }
+        let Some(d) = self.doc_mut(doc) else { return };
+        if let Ok(r) = res {
+            d.found.insert(page, r);
         }
     }
 
@@ -580,7 +578,7 @@ impl App {
             op: EditOp::Markup { page: page as u32, kind: kind.to_string(), rects, rgb, note, author: self.author() },
             reply: tx,
         });
-        self.jobs.push(Job::Edit(rx, page));
+        self.jobs.push(Job::Edit(rx, d.id, page));
         self.clear_selection();
     }
 
@@ -636,6 +634,21 @@ impl App {
         }
         if k_save {
             self.start_save();
+        }
+        let (mut k_close, mut k_next_tab, mut k_prev_tab) = (false, false, false);
+        ctx.input_mut(|i| {
+            k_close = i.consume_key(Modifiers::COMMAND, Key::W);
+            k_prev_tab = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
+            k_next_tab = i.consume_key(Modifiers::COMMAND, Key::Tab);
+        });
+        if k_close {
+            self.close_active_tab();
+        }
+        if k_next_tab {
+            self.cycle_tab(1);
+        }
+        if k_prev_tab {
+            self.cycle_tab(-1);
         }
         if zin {
             self.zoom_by(1.15);

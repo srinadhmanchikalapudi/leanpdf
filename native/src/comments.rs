@@ -98,7 +98,7 @@ impl App {
                     let id = self.doc.as_ref().unwrap().id;
                     let (tx, rx) = channel();
                     let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::Delete { page, annot: index }, reply: tx });
-                    self.jobs.push(Job::Edit(rx, page as usize));
+                    self.jobs.push(Job::Edit(rx, id, page as usize));
                 }
             }
             None => {}
@@ -128,10 +128,7 @@ impl App {
     }
 
     pub fn finish_annots(&mut self, res: Result<Vec<Annot>, String>, doc: u32, page: Option<usize>) {
-        let Some(d) = &mut self.doc else { return };
-        if d.id != doc {
-            return;
-        }
+        let Some(d) = self.doc_mut(doc) else { return };
         let Ok(batch) = res else {
             d.annots_at = None;
             return;
@@ -159,7 +156,7 @@ impl App {
                 }
                 let (tx, rx) = channel();
                 let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::Note { page: page as u32, x, y, text, author: self.author() }, reply: tx });
-                self.jobs.push(Job::Edit(rx, page));
+                self.jobs.push(Job::Edit(rx, id, page));
             }
             NoteCtx::Highlight { page, rects } => {
                 let c = self.colors[0];
@@ -168,26 +165,34 @@ impl App {
             NoteCtx::Edit { page, annot } => {
                 let (tx, rx) = channel();
                 let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::SetContents { page: page as u32, annot, text }, reply: tx });
-                self.jobs.push(Job::Edit(rx, page));
+                self.jobs.push(Job::Edit(rx, id, page));
             }
         }
     }
 
-    pub fn finish_edit(&mut self, res: Result<(), String>, page: usize) {
+    pub fn finish_edit(&mut self, res: Result<(), String>, doc: u32, page: usize) {
         if let Err(e) = res {
-            self.toast(e);
+            if !e.contains("stale") {
+                self.toast(e);
+            }
             return;
         }
-        let Some(d) = &mut self.doc else { return };
+        let Some(d) = self.doc_mut(doc) else { return };
         // redraw that page and re-read its comments
         *d.page_ver.entry(page).or_insert(0) += 1;
-        let id = d.id;
         let (tx, rx) = channel();
-        let _ = self.viewer.send(Cmd::Annots { doc: id, from: page as u32, to: page as u32 + 1, reply: tx });
-        self.jobs.push(Job::Annots(rx, id, Some(page)));
-        self.dirty = true;
-        self.save_state = "Unsaved".into();
-        self.save_at = Some(Instant::now() + Duration::from_millis(900));
+        let _ = self.viewer.send(Cmd::Annots { doc, from: page as u32, to: page as u32 + 1, reply: tx });
+        self.jobs.push(Job::Annots(rx, doc, Some(page)));
+        if self.doc.as_ref().is_some_and(|d| d.id == doc) {
+            self.dirty = true;
+            self.save_state = "Unsaved".into();
+            self.save_at = Some(Instant::now() + Duration::from_millis(900));
+        } else {
+            // the tab was switched away while this finished: write it straight away
+            let (tx, rx) = channel();
+            let _ = self.viewer.send(Cmd::Save { doc, reply: tx });
+            self.jobs.push(Job::Save(rx, doc));
+        }
     }
 
     /// Writes pending edits into the PDF (as an incremental update Adobe can read).
@@ -196,25 +201,34 @@ impl App {
             return;
         }
         let Some(d) = &self.doc else { return };
-        if self.jobs.iter().any(|j| matches!(j, Job::Save(_))) {
+        if self.jobs.iter().any(|j| matches!(j, Job::Save(..))) {
             self.save_at = Some(Instant::now() + Duration::from_millis(400));
             return;
         }
         self.dirty = false;
         self.save_state = "Saving…".into();
         let (tx, rx) = channel();
-        let _ = self.viewer.send(Cmd::Save { doc: d.id, reply: tx });
-        self.jobs.push(Job::Save(rx));
+        let id = d.id;
+        let _ = self.viewer.send(Cmd::Save { doc: id, reply: tx });
+        self.jobs.push(Job::Save(rx, id));
     }
 
-    pub fn finish_save(&mut self, res: Result<bool, String>) {
+    pub fn finish_save(&mut self, res: Result<bool, String>, doc: u32) {
+        let active = self.doc.as_ref().is_some_and(|d| d.id == doc);
         match res {
             Ok(wrote) => {
-                self.save_state = if wrote && !self.dirty { "Saved".into() } else if self.dirty { "Unsaved".into() } else { String::new() };
+                if active {
+                    self.save_state = if wrote && !self.dirty { "Saved".into() } else if self.dirty { "Unsaved".into() } else { String::new() };
+                }
             }
             Err(e) => {
-                self.dirty = true;
-                self.save_state = "Not saved".into();
+                if e.contains("stale") {
+                    return;
+                }
+                if active {
+                    self.dirty = true;
+                    self.save_state = "Not saved".into();
+                }
                 self.toast(e);
             }
         }

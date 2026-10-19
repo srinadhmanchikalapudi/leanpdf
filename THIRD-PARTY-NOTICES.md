@@ -15,6 +15,7 @@ LeanPDF itself is MIT-licensed (see `LICENSE`). It uses the following software, 
 | [pdfium-render](https://github.com/ajrcarey/pdfium-render) 0.9.4 (vendored in `vendor/pdfium-render` with one added function, `save_incremental_to_writer`) | MIT OR Apache-2.0 |
 | [egui / eframe](https://github.com/emilk/egui) (native app) | MIT OR Apache-2.0 |
 | [Tauri](https://tauri.app/) and its plugins (web-view app) | MIT OR Apache-2.0 |
+| App icon: the egui/eframe default window icon | MIT OR Apache-2.0 |
 | [rusqlite](https://github.com/rusqlite/rusqlite) with bundled [SQLite](https://sqlite.org/) | MIT; SQLite is public domain |
 | [rfd](https://github.com/PolyMeilex/rfd) | MIT |
 | walkdir, png, chrono, serde, serde_json, windows-sys, winresource | MIT OR Apache-2.0 |

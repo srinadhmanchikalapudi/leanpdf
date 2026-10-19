@@ -1,9 +1,10 @@
 //! PDFium access. One process-wide library handle, plus a worker thread that
-//! owns the currently open document (PDFium documents are not `Send`).
+//! owns every open document (PDFium documents are not `Send`).
 
 use crate::edit;
 use pdfium_render::prelude::*;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
@@ -154,6 +155,8 @@ pub enum Cmd {
     Edit { doc: u32, op: EditOp, reply: Reply<()> },
     /// Writes pending edits to disk. Replies true if anything was written.
     Save { doc: u32, reply: Reply<bool> },
+    /// Saves pending edits, then closes the document and frees it.
+    Close { doc: u32, reply: Reply<()> },
 }
 
 pub fn spawn_worker() -> Sender<Cmd> {
@@ -190,7 +193,7 @@ fn open_info(doc: &PdfDocument<'static>, id: u32) -> Result<DocInfo, String> {
 
 fn worker(rx: Receiver<Cmd>) {
     let lib = pdfium();
-    let mut current: Option<Open> = None;
+    let mut docs: HashMap<u32, Open> = HashMap::new();
     let mut next_id = 1u32;
 
     while let Ok(first) = rx.recv() {
@@ -215,9 +218,6 @@ fn worker(rx: Receiver<Cmd>) {
             };
             match cmd {
                 Cmd::Open { path, reply } => {
-                    // Never lose edits when switching files.
-                    let _ = save_current(pdfium, &mut current);
-                    current = None; // release the previous file first
                     let from_file = std::fs::metadata(&path).map(|m| m.len() > READ_WHOLE_LIMIT).unwrap_or(false);
                     let result = load_document(pdfium, &path)
                         .map_err(|e| format!("Could not open PDF: {e}"))
@@ -225,29 +225,29 @@ fn worker(rx: Receiver<Cmd>) {
                             let id = next_id;
                             next_id += 1;
                             let info = open_info(&doc, id)?;
-                            current = Some(Open { id, doc, path: path.clone(), dirty: false, touched: Default::default(), from_file });
+                            docs.insert(id, Open { id, doc, path: path.clone(), dirty: false, touched: Default::default(), from_file });
                             Ok(info)
                         });
                     let _ = reply.send(result);
                 }
                 Cmd::Render { doc, page, width, reply } => {
-                    reply(with_doc(&current, doc, |o| render_png(&o.doc, page, width)));
+                    reply(with_doc(&docs, doc, |o| render_png(&o.doc, page, width)));
                 }
                 Cmd::RenderRgba { doc, page, width, reply } => {
-                    reply(with_doc(&current, doc, |o| render_rgba(&o.doc, page, width)));
+                    reply(with_doc(&docs, doc, |o| render_rgba(&o.doc, page, width)));
                 }
                 Cmd::Annots { doc, from, to, reply } => {
-                    let _ = reply.send(with_doc(&current, doc, |o| Ok(annotations(&o.doc, from, to))));
+                    let _ = reply.send(with_doc(&docs, doc, |o| Ok(annotations(&o.doc, from, to))));
                 }
                 Cmd::Find { doc, page, terms, reply } => {
-                    let _ = reply.send(with_doc(&current, doc, |o| find_rects(&o.doc, page, &terms)));
+                    let _ = reply.send(with_doc(&docs, doc, |o| find_rects(&o.doc, page, &terms)));
                 }
                 Cmd::Select { doc, page, a, b, reply } => {
-                    let _ = reply.send(with_doc(&current, doc, |o| edit::select_text(&o.doc, page, a, b)));
+                    let _ = reply.send(with_doc(&docs, doc, |o| edit::select_text(&o.doc, page, a, b)));
                 }
                 Cmd::Edit { doc, op, reply } => {
-                    let result = match &mut current {
-                        Some(o) if o.id == doc => {
+                    let result = match docs.get_mut(&doc) {
+                        Some(o) => {
                             let page = op.page();
                             let r = apply_edit(&o.doc, op);
                             if r.is_ok() {
@@ -256,20 +256,32 @@ fn worker(rx: Receiver<Cmd>) {
                             }
                             r
                         }
-                        _ => Err("stale document".into()),
+                        None => Err("stale document".into()),
                     };
                     let _ = reply.send(result);
                 }
                 Cmd::Save { doc, reply } => {
-                    let result = match &current {
-                        Some(o) if o.id == doc => save_current(pdfium, &mut current),
-                        _ => Err("stale document".into()),
-                    };
-                    let _ = reply.send(result);
+                    let _ = reply.send(save_doc(pdfium, &mut docs, doc));
+                }
+                Cmd::Close { doc, reply } => {
+                    let r = save_doc(pdfium, &mut docs, doc).map(|_| ());
+                    docs.remove(&doc);
+                    let _ = reply.send(r);
                 }
             }
         }
     }
+}
+
+/// Saves one open document (if it has pending edits), keeping it open.
+fn save_doc(pdfium: &'static Pdfium, docs: &mut HashMap<u32, Open>, id: u32) -> Result<bool, String> {
+    let Some(o) = docs.remove(&id) else { return Err("stale document".into()) };
+    let mut slot = Some(o);
+    let result = save_current(pdfium, &mut slot);
+    if let Some(o) = slot {
+        docs.insert(id, o);
+    }
+    result
 }
 
 fn apply_edit(doc: &PdfDocument<'static>, op: EditOp) -> Result<(), String> {
@@ -412,13 +424,14 @@ fn fail(cmd: Cmd, err: String) {
         Cmd::Select { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Edit { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Save { reply, .. } => drop(reply.send(Err(err))),
+        Cmd::Close { reply, .. } => drop(reply.send(Err(err))),
     }
 }
 
-fn with_doc<T>(current: &Option<Open>, id: u32, f: impl FnOnce(&Open) -> Result<T, String>) -> Result<T, String> {
-    match current {
-        Some(o) if o.id == id => f(o),
-        _ => Err("stale document".into()),
+fn with_doc<T>(docs: &HashMap<u32, Open>, id: u32, f: impl FnOnce(&Open) -> Result<T, String>) -> Result<T, String> {
+    match docs.get(&id) {
+        Some(o) => f(o),
+        None => Err("stale document".into()),
     }
 }
 

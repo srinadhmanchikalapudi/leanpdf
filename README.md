@@ -42,6 +42,7 @@ Uninstalling removes the program only. Your PDFs are never touched, and you are 
 
 - **Light and quick.** PDFium (the engine inside Chrome) draws only the pages near the screen and frees the rest, so memory stays flat on huge PDFs. The native app uses about 120 MB with a PDF open, and Windows' Task Manager shows far less than that once it has been idle for a few seconds.
 - **Search a whole folder.** Pick a folder once; it is remembered. Every PDF under it is indexed (SQLite full text, only changed files are re-read). Type in the sidebar to see file names, page numbers and snippets. Click a hit to open that page with the matches highlighted, then search again for the next one.
+- **Tabs.** Every PDF you open gets its own tab; opening one that is already open just switches to it. Middle-click or the x closes a tab, Ctrl+W closes the current one, Ctrl+Tab / Ctrl+Shift+Tab move between tabs. Your tabs come back the next time you start the app.
 - **A folder tree.** Click a folder to limit the search to it. **Prev / Next** walk through the files in tree order and skip any that cannot be opened.
 - **Comments that work with Adobe.** Existing comments (highlights, notes, underlines, text boxes) are listed in a panel; click one to jump to it.
   Select text to **highlight** (four colors), **underline**, **strike through**, **highlight with a comment**, or **copy**. **+ Note** places a sticky note. Edit or delete any comment from the panel.
@@ -54,8 +55,10 @@ Uninstalling removes the program only. Your PDFs are never touched, and you are 
 | --- | --- |
 | Ctrl+K / Ctrl+Shift+F | Focus folder search |
 | Enter (in search) | Open the first result |
-| Alt+Left / Alt+Right | Previous / next PDF in the folder |
-| Ctrl+O | Open a single PDF |
+| Alt+Left / Alt+Right | Previous / next PDF in the folder (replaces the current tab) |
+| Ctrl+O | Open a single PDF (in a new tab) |
+| Ctrl+W | Close the current tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+B | Show / hide the sidebar |
 | Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+1 | Zoom in / out / fit width / 100% (Ctrl + mouse wheel also zooms) |
 | N | Sticky-note tool |

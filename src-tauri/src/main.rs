@@ -16,6 +16,8 @@ struct AppState {
     indexer: Indexer,
     dir: PathBuf,
     settings: Mutex<Settings>,
+    /// This front end shows one document at a time; the engine can hold several.
+    current_doc: Mutex<Option<u32>>,
 }
 
 /// Sends a command to the viewer thread and waits for its answer without
@@ -101,7 +103,14 @@ async fn search(query: String, scope: String, state: State<'_, AppState>) -> Res
 
 #[tauri::command]
 async fn open_pdf(path: String, state: State<'_, AppState>) -> Result<DocInfo, String> {
-    ask(&state.viewer, |reply| Cmd::Open { path, reply }).await
+    // Close (and save) the previous document so it does not stay in memory.
+    let old = state.current_doc.lock().unwrap().take();
+    if let Some(old) = old {
+        let _ = ask(&state.viewer, |reply| Cmd::Close { doc: old, reply }).await;
+    }
+    let info = ask(&state.viewer, |reply| Cmd::Open { path, reply }).await?;
+    *state.current_doc.lock().unwrap() = Some(info.id);
+    Ok(info)
 }
 
 #[tauri::command]
@@ -232,7 +241,7 @@ fn main() {
             if let Some(folder) = settings.folder.clone() {
                 indexer.scan(folder, true);
             }
-            app.manage(AppState { viewer, indexer, dir, settings: Mutex::new(settings) });
+            app.manage(AppState { viewer, indexer, dir, settings: Mutex::new(settings), current_doc: Mutex::new(None) });
             // Safety net: the window starts hidden and the page shows it when ready.
             if let Some(win) = app.get_webview_window("main") {
                 std::thread::spawn(move || {

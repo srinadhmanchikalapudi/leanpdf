@@ -2,6 +2,7 @@
 
 mod comments;
 mod side;
+mod tabs;
 mod util;
 mod view;
 
@@ -132,6 +133,9 @@ pub struct OpenCtx {
     pub hit_pages: Vec<usize>,
     pub quiet: bool,
     pub seq: u64,
+    /// Replace the active tab instead of opening a new one (Prev/Next).
+    pub replace: bool,
+    pub activate: bool,
 }
 
 pub struct StepCtx {
@@ -144,8 +148,8 @@ pub enum Job {
     Open(Receiver<Result<DocInfo, String>>, OpenCtx),
     Annots(Receiver<Result<Vec<Annot>, String>>, u32, Option<usize>),
     Select(Receiver<Result<Selection, String>>, u32),
-    Edit(Receiver<Result<(), String>>, usize),
-    Save(Receiver<Result<bool, String>>),
+    Edit(Receiver<Result<(), String>>, u32, usize),
+    Save(Receiver<Result<bool, String>>, u32),
     Find(Receiver<Result<Vec<Rect4>, String>>, u32, usize),
     Search(Receiver<Result<Vec<FileHits>, String>>, u64),
 }
@@ -183,6 +187,12 @@ pub struct App {
 
     // viewer
     pub doc: Option<Doc>,
+    pub tab_order: Vec<u32>,
+    pub background: HashMap<u32, Doc>,
+    pub tab_scroll: bool,
+    pub restore_pending: Vec<(String, usize)>,
+    pub restore_active: Option<String>,
+    pub last_title: String,
     pub step: Option<StepCtx>,
     pub comments_open: bool,
     pub note_tool: bool,
@@ -251,6 +261,12 @@ impl App {
             open_seq: 0,
             view_rect: egui::Rect::NOTHING,
             doc: None,
+            tab_order: Vec::new(),
+            background: HashMap::new(),
+            tab_scroll: false,
+            restore_pending: Vec::new(),
+            restore_active: None,
+            last_title: String::new(),
             step: None,
             comments_open: false,
             note_tool: false,
@@ -279,9 +295,18 @@ impl App {
         app.refresh_files();
         let launch = std::env::args().skip(1).find(|a| a.to_lowercase().ends_with(".pdf") && PathBuf::from(a).is_file());
         let restore = std::env::var("LEANPDF_NO_RESTORE").is_err();
-        if let Some(p) = launch.or_else(|| if restore { app.settings.last_file.clone() } else { None }) {
-            let page = if app.settings.last_file.as_deref() == Some(p.as_str()) { app.settings.last_page.unwrap_or(0) as usize } else { 0 };
-            app.open_file(p, page, Vec::new(), Vec::new(), false);
+        if restore {
+            if app.restore_pending.is_empty() {
+                // first run with tabs: resume the last file
+                if let Some(p) = app.settings.last_file.clone() {
+                    app.restore_pending.push((p.clone(), app.settings.last_page.unwrap_or(0) as usize));
+                    app.restore_active = Some(p);
+                }
+            }
+            app.restore_tabs();
+        }
+        if let Some(p) = launch {
+            app.open_file(p, 0, Vec::new(), Vec::new(), false);
         }
         app
     }
@@ -297,6 +322,13 @@ impl App {
     fn load_ui_state(&mut self) {
         if let Ok(s) = std::fs::read_to_string(self.ui_state_path()) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                if let Some(a) = v["tabs"].as_array() {
+                    self.restore_pending = a
+                        .iter()
+                        .filter_map(|t| Some((t["path"].as_str()?.to_string(), t["page"].as_u64().unwrap_or(0) as usize)))
+                        .collect();
+                    self.restore_active = v["active"].as_str().map(str::to_string);
+                }
                 if v["folder"].as_str() == self.settings.folder.as_deref() {
                     self.scope = v["scope"].as_str().unwrap_or("").to_string();
                     if let Some(a) = v["expanded"].as_array() {
@@ -312,6 +344,8 @@ impl App {
             "folder": self.settings.folder,
             "scope": self.scope,
             "expanded": self.expanded.iter().collect::<Vec<_>>(),
+            "tabs": self.tab_state().iter().map(|(p, pg)| serde_json::json!({"path": p, "page": pg})).collect::<Vec<_>>(),
+            "active": self.doc.as_ref().map(|d| d.path.clone()),
         });
         let _ = std::fs::write(self.ui_state_path(), v.to_string());
     }
@@ -381,14 +415,14 @@ impl App {
                     Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Select(rx, doc)),
                     Err(_) => {}
                 },
-                Job::Edit(rx, page) => match rx.try_recv() {
-                    Ok(res) => self.finish_edit(res, page),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Edit(rx, page)),
+                Job::Edit(rx, doc, page) => match rx.try_recv() {
+                    Ok(res) => self.finish_edit(res, doc, page),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Edit(rx, doc, page)),
                     Err(_) => {}
                 },
-                Job::Save(rx) => match rx.try_recv() {
-                    Ok(res) => self.finish_save(res),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Save(rx)),
+                Job::Save(rx, doc) => match rx.try_recv() {
+                    Ok(res) => self.finish_save(res, doc),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Save(rx, doc)),
                     Err(_) => {}
                 },
                 Job::Find(rx, doc, page) => match rx.try_recv() {
@@ -459,6 +493,14 @@ impl eframe::App for App {
         self.handle_keys(&ctx);
 
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
+        if !self.tab_order.is_empty() {
+            egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
+        }
+        let title = self.tab_title_for_window();
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
         if self.side_open {
             egui::Panel::left("side").resizable(true).default_size(330.0).size_range(220.0..=640.0).show(ui, |ui| self.sidebar(ui));
         }
@@ -526,7 +568,11 @@ fn save_png(path: &str, img: &egui::ColorImage) {
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("LeanPDF").with_inner_size([1280.0, 860.0]).with_min_inner_size([720.0, 480.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title("LeanPDF")
+            .with_inner_size([1280.0, 860.0])
+            .with_min_inner_size([720.0, 480.0])
+            .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")).expect("app icon")),
         ..Default::default()
     };
     eframe::run_native("LeanPDF", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))

@@ -328,30 +328,45 @@ impl App {
     // ---------- opening documents ----------
 
     pub fn open_file(&mut self, path: String, page: usize, terms: Vec<String>, hit_pages: Vec<usize>, quiet: bool) {
-        if let Some(d) = &self.doc {
-            if d.path == path {
+        self.open_file_ex(path, page, terms, hit_pages, quiet, false, true);
+    }
+
+    /// Opens a PDF in a new tab (or switches to its tab if it is already open).
+    /// `replace` puts it in the active tab's place (used by Prev/Next); `activate` false opens it in the background.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_file_ex(&mut self, path: String, page: usize, terms: Vec<String>, hit_pages: Vec<usize>, quiet: bool, replace: bool, activate: bool) {
+        if let Some(id) = self.tab_for_path(&path) {
+            if activate {
+                self.activate(id);
+            }
+            if self.doc.as_ref().is_some_and(|d| d.id == id) {
                 let pages = if hit_pages.is_empty() { vec![page] } else { hit_pages };
                 self.goto_page(page, None);
                 self.request_highlights(&terms, &pages);
-                return;
             }
+            if self.step.take().is_some_and(|s| s.skipped > 0) {
+                self.toast("Skipped PDFs that could not be opened.");
+            }
+            return;
         }
-        self.open_seq += 1;
+        // a double click must not open the same file twice
+        if self.jobs.iter().any(|j| matches!(j, Job::Open(_, c) if c.path == path)) {
+            return;
+        }
         let (tx, rx) = channel();
         let _ = self.viewer.send(Cmd::Open { path: path.clone(), reply: tx });
-        self.jobs.push(Job::Open(rx, OpenCtx { path, page, terms, hit_pages, quiet, seq: self.open_seq }));
+        self.jobs.push(Job::Open(rx, OpenCtx { path, page, terms, hit_pages, quiet, seq: 0, replace, activate }));
     }
 
     pub fn finish_open(&mut self, res: Result<DocInfo, String>, c: OpenCtx) {
-        if c.seq != self.open_seq {
-            return; // a newer open superseded this one
-        }
         match res {
             Ok(info) => {
-                let name = base_name(&c.path).to_string();
+                let name = base_name(&c.path.replace('\\', "/")).to_string();
                 let n = info.pages.len();
+                let page = c.page.min(n.saturating_sub(1));
+                let id = info.id;
                 let mut d = Doc {
-                    id: info.id,
+                    id,
                     path: c.path.clone(),
                     name,
                     pages: info.pages,
@@ -364,7 +379,7 @@ impl App {
                     page_ver: HashMap::new(),
                     scroll_y: 0.0,
                     scroll_to: None,
-                    cur_page: 0,
+                    cur_page: page,
                     viewport_w: 0.0,
                     viewport_h: 0.0,
                     zoom_changed: Instant::now(),
@@ -377,28 +392,25 @@ impl App {
                     flash: None,
                 };
                 d.layout();
-                self.doc = Some(d);
-                self.message.clear();
-                self.dirty = false;
-                self.save_at = None;
-                self.seltool = None;
-                self.editor = None;
+                d.scroll_y = (d.tops[page] - 10.0).max(0.0);
                 if let Some(e) = self.files.iter_mut().find(|f| f.path == c.path) {
                     if e.status == "error" {
                         e.status = "done".into();
                         e.note = None;
                     }
                 }
+                let replace_id = if c.replace { self.doc.as_ref().map(|d| d.id) } else { None };
+                self.add_tab(d, replace_id, c.activate);
                 if self.step.take().is_some_and(|s| s.skipped > 0) {
                     self.toast("Skipped PDFs that could not be opened.");
                 }
-                self.reveal = true;
-                self.reveal_current();
-                let page = c.page.min(n.saturating_sub(1));
-                self.goto_page(page, None);
-                let pages = if c.hit_pages.is_empty() { vec![page] } else { c.hit_pages };
-                self.request_highlights(&c.terms, &pages);
-                self.remember();
+                if self.doc.as_ref().is_some_and(|d| d.id == id) {
+                    self.message.clear();
+                    self.goto_page(page, None);
+                    let pages = if c.hit_pages.is_empty() { vec![page] } else { c.hit_pages };
+                    self.request_highlights(&c.terms, &pages);
+                    self.remember();
+                }
             }
             Err(e) => {
                 let e = e.trim_start_matches("Could not open PDF: ").to_string();
@@ -422,7 +434,7 @@ impl App {
         }
     }
 
-    fn reveal_current(&mut self) {
+    pub fn reveal_current(&mut self) {
         let Some(d) = &self.doc else { return };
         let Some(f) = self.files.iter().find(|f| f.path == d.path) else { return };
         let parts: Vec<&str> = f.rel.split('/').collect();
@@ -458,7 +470,7 @@ impl App {
             return;
         }
         let path = self.files[self.order[s.pos as usize]].path.clone();
-        self.open_file(path, 0, Vec::new(), Vec::new(), true);
+        self.open_file_ex(path, 0, Vec::new(), Vec::new(), true, true, true);
     }
 
     pub fn nav_state(&self) -> (bool, bool) {
@@ -476,8 +488,8 @@ fn tree_node(ui: &mut egui::Ui, node: &Tree, v: &TreeView, acts: &mut SideAction
         let label = format!("{}  ({})", c.name, c.count);
         let r = ui
             .horizontal(|ui| {
-                let (_, icon) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &icon);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
+                paint_chevron(ui, rect, open);
                 ui.add(egui::Button::selectable(v.scope == c.path, (RichText::new(label).strong(), egui::Atom::grow())).min_size(egui::vec2(ui.available_width(), 0.0)))
             })
             .inner;
@@ -550,4 +562,18 @@ fn snippet_job(ui: &egui::Ui, s: &str) -> LayoutJob {
         }
     }
     job
+}
+
+/// A small disclosure chevron (> closed, v open), drawn thin so it reads as a hint, not a button.
+fn paint_chevron(ui: &egui::Ui, rect: egui::Rect, open: bool) {
+    let c = rect.center();
+    let r = 3.0;
+    let pts = if open {
+        [egui::pos2(c.x - r, c.y - r * 0.5), egui::pos2(c.x, c.y + r * 0.5), egui::pos2(c.x + r, c.y - r * 0.5)]
+    } else {
+        [egui::pos2(c.x - r * 0.5, c.y - r), egui::pos2(c.x + r * 0.5, c.y), egui::pos2(c.x - r * 0.5, c.y + r)]
+    };
+    let stroke = egui::Stroke::new(1.4, ui.visuals().weak_text_color());
+    ui.painter().line_segment([pts[0], pts[1]], stroke);
+    ui.painter().line_segment([pts[1], pts[2]], stroke);
 }
