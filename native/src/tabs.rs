@@ -103,6 +103,11 @@ impl App {
         // The engine saves pending edits before it closes the document.
         let (tx, _rx) = channel();
         let _ = self.viewer.send(Cmd::Close { doc: id, reply: tx });
+        if let Some(c) = self.chats.remove(&id) {
+            if let Some(s) = c.stream {
+                s.cancel_now();
+            }
+        }
         self.tab_order.remove(pos);
         let was_active = self.doc.as_ref().is_some_and(|d| d.id == id);
         if was_active {

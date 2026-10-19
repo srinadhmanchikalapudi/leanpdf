@@ -80,11 +80,24 @@ impl App {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let dot = self.updater.info.is_some();
+                if ui.selectable_label(self.settings_win.open, if dot { "Settings •" } else { "Settings" }).on_hover_text("Scrolling, theme, AI, updates (Ctrl+,)").clicked() {
+                    let open = !self.settings_win.open;
+                    self.settings_win.open = open;
+                    if open {
+                        self.ai.loaded = false;
+                    }
+                }
+                ui.separator();
                 let n = self.annot_count();
                 let label = format!("Comments  {n}");
-                if ui.selectable_label(self.comments_open, label).on_hover_text("Comments in this PDF").clicked() {
-                    self.comments_open = !self.comments_open;
+                if ui.selectable_label(self.comments_open && !self.chat_open, label).on_hover_text("Comments in this PDF").clicked() {
+                    self.comments_open = !self.comments_open || self.chat_open;
+                    self.chat_open = false;
                     self.refit();
+                }
+                if ui.selectable_label(self.chat_open, "Ask AI").on_hover_text("Ask questions about this PDF (Ctrl+J)").clicked() {
+                    self.toggle_chat();
                 }
                 ui.separator();
                 if self.doc.is_some() {
@@ -191,6 +204,7 @@ impl App {
         self.view_rect = ui.max_rect();
         let ppp = ui.ctx().pixels_per_point();
         let avail = ui.available_size();
+        let speed = self.scroll_speed();
         let Some(doc) = &mut self.doc else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new(&self.message).weak());
@@ -213,7 +227,7 @@ impl App {
         doc.viewport_w = avail.x;
         doc.viewport_h = avail.y;
 
-        let mut area = egui::ScrollArea::both().id_salt("pages").auto_shrink(false);
+        let mut area = egui::ScrollArea::both().id_salt("pages").auto_shrink(false).wheel_scroll_multiplier(vec2(speed, speed));
         if let Some(y) = doc.scroll_to.take() {
             area = area.vertical_scroll_offset(y);
         }
@@ -643,6 +657,14 @@ impl App {
         });
         if k_close {
             self.close_active_tab();
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::J)) {
+            self.toggle_chat();
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma)) {
+            let open = !self.settings_win.open;
+            self.open_settings(settings_ui::SettingsTab::General, None);
+            self.settings_win.open = open;
         }
         if k_next_tab {
             self.cycle_tab(1);

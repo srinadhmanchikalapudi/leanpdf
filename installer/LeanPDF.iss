@@ -4,22 +4,27 @@
 ;   /DOutputDir=...      where the setup program is written
 
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.4.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\dist\LeanPDF-0.2.0-win-x64"
+  #define SourceDir "..\dist\LeanPDF-0.4.0-win-x64"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\dist"
 #endif
 
-#define AppName "LeanPDF"
+#ifndef AppName
+  #define AppName "LeanPDF"
+#endif
+#ifndef AppGuid
+  #define AppGuid "{{6F2A9C41-3B7E-4D58-9A16-C0E5D81B7F23}"
+#endif
 #define AppExe "LeanPDF.exe"
 #define RepoUrl "https://github.com/srinadhmanchikalapudi/leanpdf"
 
 [Setup]
 ; The AppId identifies the program to Windows: it must never change, so that a new version upgrades the old one instead of installing beside it.
-AppId={{6F2A9C41-3B7E-4D58-9A16-C0E5D81B7F23}
+AppId={#AppGuid}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -80,8 +85,15 @@ Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithList\{#AppExe}"; ValueType: no
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent
+; An update started from inside the program passes /RESTARTAPP=1, so the program comes back by itself when the silent install is done.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: RestartRequested
 
 [Code]
+function RestartRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:RESTARTAPP|0}') = '1';
+end;
+
 // Uninstalling removes the program only. The PDFs are never touched. LeanPDF's small settings file and its search index live in
 // %APPDATA%\app.leanpdf.desktop; they are removed only if the person says so (never for a silent uninstall).
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

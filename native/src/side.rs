@@ -173,7 +173,8 @@ impl App {
         ui.add_space(2.0);
         ui.separator();
 
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        let sp = self.scroll_speed();
+        egui::ScrollArea::vertical().auto_shrink(false).wheel_scroll_multiplier(egui::vec2(sp, sp)).show(ui, |ui| {
             if self.settings.folder.is_none() {
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {

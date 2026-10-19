@@ -377,6 +377,48 @@ fn like_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
+#[derive(Serialize)]
+pub struct PageText {
+    pub path: String,
+    pub rel: String,
+    /// 0-based page index
+    pub page: u32,
+    pub text: String,
+}
+
+/// The best-matching pages across the folder for a question (any of the words may match),
+/// with their stored text, for answering questions with excerpts.
+pub fn page_texts(db: &Path, root: &str, words: &[String], scope: &str, limit: usize) -> Result<Vec<PageText>, String> {
+    let words: Vec<String> = words
+        .iter()
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
+        .filter(|w| w.chars().count() >= 3)
+        .collect();
+    if words.is_empty() {
+        return Ok(Vec::new());
+    }
+    let fts = words.iter().map(|w| format!("\"{w}\"")).collect::<Vec<_>>().join(" OR ");
+    let scope_like = if scope.is_empty() { "%".to_string() } else { format!("{}/%", like_escape(scope)) };
+    let conn = open(db)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT f.path, f.rel, pages_fts.rowid, pages_fts.text
+             FROM pages_fts JOIN files f ON f.id = pages_fts.rowid / 100000
+             WHERE pages_fts MATCH ?1 AND f.root = ?2 AND f.rel LIKE ?3 ESCAPE '\\'
+             ORDER BY rank LIMIT ?4",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![fts, root, scope_like, limit as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .flatten()
+        .map(|(path, rel, rowid, text)| PageText { path, rel, page: (rowid % PAGE_STRIDE) as u32, text })
+        .collect())
+}
+
 pub fn search(db: &Path, root: &str, query: &str, scope: &str) -> Result<Vec<FileHits>, String> {
     let conn = open(db)?;
     let mut order: Vec<FileHits> = Vec::new();

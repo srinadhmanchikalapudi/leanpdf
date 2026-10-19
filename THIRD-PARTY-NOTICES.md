@@ -17,6 +17,8 @@ LeanPDF itself is MIT-licensed (see `LICENSE`). It uses the following software, 
 | [Tauri](https://tauri.app/) and its plugins (web-view app) | MIT OR Apache-2.0 |
 | App icon: the egui/eframe default window icon | MIT OR Apache-2.0 |
 | [rusqlite](https://github.com/rusqlite/rusqlite) with bundled [SQLite](https://sqlite.org/) | MIT; SQLite is public domain |
+| [ureq](https://github.com/algesten/ureq) and native-tls (Windows Schannel) for the AI requests | MIT OR Apache-2.0 |
+| [keyring](https://github.com/open-source-cooperative/keyring-rs) for storing API keys in Windows Credential Manager | MIT OR Apache-2.0 |
 | [rfd](https://github.com/PolyMeilex/rfd) | MIT |
 | walkdir, png, chrono, serde, serde_json, windows-sys, winresource | MIT OR Apache-2.0 |
 

@@ -1,8 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod chat;
 mod comments;
+mod llm;
+mod rag;
+mod settings_ui;
 mod side;
 mod tabs;
+mod update;
 mod util;
 mod view;
 
@@ -150,6 +155,7 @@ pub enum Job {
     Select(Receiver<Result<Selection, String>>, u32),
     Edit(Receiver<Result<(), String>>, u32, usize),
     Save(Receiver<Result<bool, String>>, u32),
+    Text(Receiver<Result<Vec<(u32, String)>, String>>, u32, u32),
     Find(Receiver<Result<Vec<Rect4>, String>>, u32, usize),
     Search(Receiver<Result<Vec<FileHits>, String>>, u64),
 }
@@ -195,6 +201,13 @@ pub struct App {
     pub last_title: String,
     pub step: Option<StepCtx>,
     pub comments_open: bool,
+    pub chat_open: bool,
+    pub chats: HashMap<u32, chat::Chat>,
+    pub ai: chat::AiUi,
+    pub settings_win: settings_ui::SettingsWin,
+    pub whatsnew: Option<settings_ui::WhatsNew>,
+    pub updater: update::Updater,
+    pub quit: bool,
     pub note_tool: bool,
     pub editor: Option<NoteEditor>,
     pub seltool: Option<egui::Pos2>,
@@ -269,6 +282,13 @@ impl App {
             last_title: String::new(),
             step: None,
             comments_open: false,
+            chat_open: false,
+            chats: HashMap::new(),
+            ai: chat::AiUi::default(),
+            settings_win: settings_ui::SettingsWin::default(),
+            whatsnew: None,
+            updater: update::Updater::new(),
+            quit: false,
             note_tool: false,
             editor: None,
             seltool: None,
@@ -292,9 +312,12 @@ impl App {
         };
         spawn_idle_trimmer();
         app.load_ui_state();
+        app.apply_look();
+        app.startup_update_tasks();
         app.refresh_files();
         let launch = std::env::args().skip(1).find(|a| a.to_lowercase().ends_with(".pdf") && PathBuf::from(a).is_file());
         let restore = std::env::var("LEANPDF_NO_RESTORE").is_err();
+        let restore = restore && app.settings.reopen_tabs.unwrap_or(true);
         if restore {
             if app.restore_pending.is_empty() {
                 // first run with tabs: resume the last file
@@ -425,6 +448,11 @@ impl App {
                     Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Save(rx, doc)),
                     Err(_) => {}
                 },
+                Job::Text(rx, doc, from) => match rx.try_recv() {
+                    Ok(res) => self.finish_text(res, doc, from),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Text(rx, doc, from)),
+                    Err(_) => {}
+                },
                 Job::Find(rx, doc, page) => match rx.try_recv() {
                     Ok(res) => self.finish_find(res, doc, page),
                     Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Find(rx, doc, page)),
@@ -452,6 +480,8 @@ impl App {
             self.remember_at = None;
             self.remember();
         }
+        self.poll_chats();
+        self.poll_updates();
         self.maybe_load_annots();
         self.pump_selection();
         if let Some((_, t)) = &self.toast {
@@ -479,6 +509,8 @@ impl App {
             || self.remember_at.is_some()
             || self.doc.as_ref().is_some_and(|d| !d.inflight.is_empty() || d.annots_at.is_some() || d.drag.is_some())
             || self.toast.is_some()
+            || self.chat_busy()
+            || self.updater.busy()
     }
 }
 
@@ -493,6 +525,9 @@ impl eframe::App for App {
         self.handle_keys(&ctx);
 
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
+        if self.updater.show_banner() {
+            egui::Panel::top("update").show(ui, |ui| self.update_banner(ui));
+        }
         if !self.tab_order.is_empty() {
             egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
         }
@@ -504,12 +539,19 @@ impl eframe::App for App {
         if self.side_open {
             egui::Panel::left("side").resizable(true).default_size(330.0).size_range(220.0..=640.0).show(ui, |ui| self.sidebar(ui));
         }
-        if self.comments_open {
+        if self.chat_open {
+            egui::Panel::right("chat").resizable(true).default_size(380.0).size_range(280.0..=640.0).show(ui, |ui| self.chat_panel(ui));
+        } else if self.comments_open {
             egui::Panel::right("comments").resizable(true).default_size(320.0).size_range(220.0..=560.0).show(ui, |ui| self.comments_panel(ui));
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::from_gray(22))).show(ui, |ui| self.viewer_ui(ui));
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(if ui.visuals().dark_mode { egui::Color32::from_gray(22) } else { egui::Color32::from_gray(200) })).show(ui, |ui| self.viewer_ui(ui));
 
         self.floating(&ctx);
+        self.settings_window(&ctx);
+        self.whats_new_window(&ctx);
+        if self.quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.paint_toast(&ctx);
 
         // Re-run soon while anything is in flight; otherwise sleep (no idle CPU).

@@ -25,7 +25,8 @@ impl App {
         }
         let mut act: Option<Act> = None;
         let accent = ui.visuals().hyperlink_color;
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        let sp = self.scroll_speed();
+        egui::ScrollArea::vertical().auto_shrink(false).wheel_scroll_multiplier(egui::vec2(sp, sp)).show(ui, |ui| {
             for (i, a) in d.annots.iter().enumerate() {
                 let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 6)).show(ui, |ui| {
                     ui.set_width(ui.available_width());

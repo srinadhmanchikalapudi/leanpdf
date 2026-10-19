@@ -43,6 +43,9 @@ Uninstalling removes the program only. Your PDFs are never touched, and you are 
 - **Light and quick.** PDFium (the engine inside Chrome) draws only the pages near the screen and frees the rest, so memory stays flat on huge PDFs. The native app uses about 120 MB with a PDF open, and Windows' Task Manager shows far less than that once it has been idle for a few seconds.
 - **Search a whole folder.** Pick a folder once; it is remembered. Every PDF under it is indexed (SQLite full text, only changed files are re-read). Type in the sidebar to see file names, page numbers and snippets. Click a hit to open that page with the matches highlighted, then search again for the next one.
 - **Tabs.** Every PDF you open gets its own tab; opening one that is already open just switches to it. Middle-click or the x closes a tab, Ctrl+W closes the current one, Ctrl+Tab / Ctrl+Shift+Tab move between tabs. Your tabs come back the next time you start the app.
+- **Ask AI about your PDFs.** Open the **Ask AI** panel (Ctrl+J) and ask questions about the open PDF, such as "Summarize this" or "What does it say about renewal?". LeanPDF picks the relevant pages and sends only that text to **OpenRouter** or **Anthropic**, using your own API key (kept in Windows Credential Manager, never in a file). Answers stream in, cite pages as clickable sources, and a note under each answer says exactly how many pages were sent. Tick "Also search other PDFs in this folder" to let it pull pages from the rest of your folder too. Costs are whatever your provider charges; roughly 5-15k tokens per question. The feature adds only a few MB of RAM, because the model runs on the provider's servers.
+- **Updates inside the app.** LeanPDF checks GitHub once a day and shows a bar when a new version is out; **Update now** downloads it, verifies its checksum, installs it and restarts. **What's new** shows the changes, and a window shows them once after each update.
+- **Settings** (Ctrl+,): scroll speed, theme, interface size, comment author name, reopening tabs, the AI provider, key and model (a dropdown filled from the provider), and update options.
 - **A folder tree.** Click a folder to limit the search to it. **Prev / Next** walk through the files in tree order and skip any that cannot be opened.
 - **Comments that work with Adobe.** Existing comments (highlights, notes, underlines, text boxes) are listed in a panel; click one to jump to it.
   Select text to **highlight** (four colors), **underline**, **strike through**, **highlight with a comment**, or **copy**. **+ Note** places a sticky note. Edit or delete any comment from the panel.
@@ -61,6 +64,8 @@ Uninstalling removes the program only. Your PDFs are never touched, and you are 
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+B | Show / hide the sidebar |
 | Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+1 | Zoom in / out / fit width / 100% (Ctrl + mouse wheel also zooms) |
+| Ctrl+J | Open / close the Ask AI panel |
+| Ctrl+, | Settings |
 | N | Sticky-note tool |
 | Ctrl+C | Copy the selected text |
 | Ctrl+S | Save now (otherwise it saves about a second after a change) |
@@ -80,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Installer # also the
 cargo build --release --manifest-path native/Cargo.toml
 ```
 
-`tools\publish.ps1` downloads `pdfium.dll` (pdfium-binaries, Chromium build 7881) into `pdfium/` if it is missing. To publish a version, push a tag such as `v0.1.0`: the release workflow builds the installer and attaches it.
+Every version needs a `## x.y.z` section in `CHANGELOG.md`: it becomes the release notes and the in-app "What's new". `tools\publish.ps1` downloads `pdfium.dll` (pdfium-binaries, Chromium build 7881) into `pdfium/` if it is missing. To publish a version, push a tag such as `v0.1.0`: the release workflow builds the installer and attaches it.
 
 ### How the repository is laid out
 

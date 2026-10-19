@@ -12,7 +12,7 @@
   pdfium.dll is downloaded automatically (pdfium-binaries, Chromium build 7881) when pdfium\pdfium.dll is missing.
 #>
 param(
-    [string] $Version = "0.2.0",
+    [string] $Version = "0.4.0",
     [switch] $Installer,
     [switch] $SkipTests
 )
@@ -47,6 +47,11 @@ if (-not (Test-Path (Join-Path $pdfiumDir "pdfium.dll"))) {
     tar -xzf $tgz -C $x
     Copy-Item (Join-Path $x "bin\pdfium.dll") $pdfiumDir -Force
     Remove-Item $tmp -Recurse -Force
+}
+
+# Every version needs notes written for people (they are shown inside the app and become the GitHub release notes).
+if (-not (Select-String -Path (Join-Path $root "CHANGELOG.md") -Pattern ("^##\s+v?" + [regex]::Escape($Version) + "\b") -Quiet)) {
+    throw "CHANGELOG.md has no section for version $Version. Add '## $Version' with a line for each change, then publish again."
 }
 
 if (-not $SkipTests) {

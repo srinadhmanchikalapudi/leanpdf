@@ -157,6 +157,8 @@ pub enum Cmd {
     Save { doc: u32, reply: Reply<bool> },
     /// Saves pending edits, then closes the document and frees it.
     Close { doc: u32, reply: Reply<()> },
+    /// Plain text of pages `from..to` as (page index, text); pages without text are skipped.
+    Text { doc: u32, from: u32, to: u32, reply: Reply<Vec<(u32, String)>> },
 }
 
 pub fn spawn_worker() -> Sender<Cmd> {
@@ -262,6 +264,9 @@ fn worker(rx: Receiver<Cmd>) {
                 }
                 Cmd::Save { doc, reply } => {
                     let _ = reply.send(save_doc(pdfium, &mut docs, doc));
+                }
+                Cmd::Text { doc, from, to, reply } => {
+                    let _ = reply.send(with_doc(&docs, doc, |o| Ok(page_texts(&o.doc, from, to))));
                 }
                 Cmd::Close { doc, reply } => {
                     let r = save_doc(pdfium, &mut docs, doc).map(|_| ());
@@ -425,6 +430,7 @@ fn fail(cmd: Cmd, err: String) {
         Cmd::Edit { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Save { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Close { reply, .. } => drop(reply.send(Err(err))),
+        Cmd::Text { reply, .. } => drop(reply.send(Err(err))),
     }
 }
 
@@ -554,6 +560,34 @@ fn find_rects(doc: &PdfDocument<'static>, index: u32, terms: &[String]) -> Resul
         }
     }
     Ok(out)
+}
+
+fn page_texts(doc: &PdfDocument<'static>, from: u32, to: u32) -> Vec<(u32, String)> {
+    let count = doc.pages().len() as u32;
+    let mut out = Vec::new();
+    for i in from..to.min(count) {
+        let Some(raw) = page_text(doc, i as i32) else { continue };
+        // keep line breaks (they help readers and models), drop the carriage returns and runs of blank lines
+        let mut text = String::new();
+        let mut blank = 0;
+        for line in raw.replace("\r\n", "\n").replace('\r', "\n").lines() {
+            let l = line.split_whitespace().collect::<Vec<_>>().join(" ");
+            if l.is_empty() {
+                blank += 1;
+                if blank == 1 && !text.is_empty() {
+                    text.push('\n');
+                }
+            } else {
+                blank = 0;
+                text.push_str(&l);
+                text.push('\n');
+            }
+        }
+        if !text.trim().is_empty() {
+            out.push((i, text));
+        }
+    }
+    out
 }
 
 /// Plain text of one page (used by the indexer).

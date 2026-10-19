@@ -4,7 +4,7 @@ name: Release
 #   git tag -a v0.1.0 -m "Summary"
 #   git push origin v0.1.0
 # The workflow tests the code, builds LeanPDF.exe, a zip and the Windows installer, and attaches the installer and the zip to a
-# GitHub release whose notes list the commits since the previous tag.
+# GitHub release whose notes are that version's section of CHANGELOG.md.
 on:
   push:
     tags: ["v*"]
@@ -48,8 +48,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $v = "${{ steps.version.outputs.version }}"
+          ./tools/release-notes.ps1 -Version $v -OutFile release-notes.md
           gh release create "${{ github.ref_name }}" `
             "dist/LeanPDF-Setup-$v.exe" `
             "dist/LeanPDF-$v-win-x64.zip" `
             --title "LeanPDF $v" `
-            --generate-notes
+            --notes-file release-notes.md

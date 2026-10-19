@@ -75,6 +75,13 @@ pub fn terms_from_query(q: &str) -> Vec<String> {
     t.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 2).map(str::to_string).collect()
 }
 
+/// Opens a web address in the default browser (https only).
+pub fn open_url(url: &str) {
+    if url.starts_with("https://") {
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,17 +1,20 @@
 [package]
 name = "leanpdf-native"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2024"
 description = "A small, fast PDF reader with folder search and Adobe-compatible comments"
 license = "MIT"
 
 [dependencies]
 serde_json = "1.0.154"
-eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts"] }
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "clipboard"] }
 leanpdf-core = { path = "../core" }
 png = "0.18.1"
 rfd = "0.17.2"
 windows-sys = { version = "0.61.2", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
+keyring = "4.2.0"
+sha2 = "0.11.1"
 
 [profile.release]
 opt-level = 3
