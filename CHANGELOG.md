@@ -2,6 +2,10 @@
 
 Each version's notes are shown inside the app (after an update, and in the update bar) and become the GitHub release notes. Add a `## x.y.z` section before publishing a version.
 
+## 0.4.1
+
+- **Fixed:** "Could not reach OpenRouter: native-tls: unable to find any user-specified roots in the final cert chain". LeanPDF now uses Windows' own certificate store for secure connections, so the AI model list, AI answers and the update check all connect. If you saw that error, install this version once by hand; after that updates install themselves.
+
 ## 0.4.0
 
 - **Settings window** (the Settings button, or Ctrl+,): mouse-wheel scroll speed, theme (system / dark / light), interface size, your comment author name, whether tabs reopen on start, and the AI and update options in one place.

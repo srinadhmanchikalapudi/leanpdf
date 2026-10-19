@@ -1558,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "leanpdf-native"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "eframe",
  "keyring",

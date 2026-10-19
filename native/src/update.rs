@@ -356,6 +356,17 @@ fn launch(path: &std::path::Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Real HTTPS to GitHub; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn the_real_github_release_check_works() {
+        // 0.0.1 is older than anything published, so a release must be offered
+        let info = check_latest("0.0.1").expect("GitHub reachable").expect("a newer release exists");
+        assert!(info.url.as_deref().is_some_and(|u| u.contains("LeanPDF-Setup-")), "{info:?}");
+        assert!(info.sha256.is_some(), "GitHub publishes a checksum for the installer");
+        assert!(is_trusted_url(info.url.as_deref().unwrap()));
+    }
+
     #[test]
     fn versions_compare_numerically() {
         assert!(is_newer("v0.10.0", "0.9.9"));

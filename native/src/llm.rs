@@ -120,7 +120,12 @@ pub enum ChatEvent {
 }
 
 pub fn agent() -> ureq::Agent {
-    let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build();
+    // Windows' own certificate store (Schannel). The default, a bundled Mozilla list, fails for some
+    // certificate chains ("unable to find any user-specified roots in the final cert chain").
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
     ureq::Agent::config_builder()
         .tls_config(tls)
         .http_status_as_error(false)
@@ -375,6 +380,19 @@ pub fn parse_anthropic_models(json: &str) -> Result<(Vec<ModelInfo>, bool, Optio
 
 #[cfg(test)]
 mod tests {
+    /// Real HTTPS to the real services (no key needed); run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn real_https_connections_work() {
+        let models = super::list_models(super::Provider::OpenRouter, None).expect("OpenRouter model list over HTTPS");
+        assert!(models.iter().any(|m| m.id.starts_with("anthropic/")), "{} models", models.len());
+        // Anthropic answers a bogus key with 401, which proves the TLS handshake and the request worked.
+        let e = super::list_models(super::Provider::Anthropic, Some("sk-ant-not-a-real-key")).unwrap_err();
+        assert!(e.contains("rejected the API key") || e.contains("401"), "{e}");
+        let e = super::test_connection(super::Provider::OpenRouter, "sk-or-not-a-real-key", "anthropic/claude-haiku-5.5").unwrap_err();
+        assert!(e.contains("HTTP 401") || e.contains("rejected"), "{e}");
+    }
+
     #[test]
     fn model_lists_are_parsed() {
         let or = r#"{"data":[{"id":"openai/gpt-x","name":"GPT X","pricing":{"prompt":"0.000001","completion":"0.000002"}},
