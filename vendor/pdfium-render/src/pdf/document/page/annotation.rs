@@ -367,8 +367,18 @@ impl<'a> PdfPageAnnotation<'a> {
         }
     }
 
+    /// LeanPDF patch: the raw string stored under `key` in the annotation dictionary
+    /// (for example `RC`, the rich-text copy of a comment that Adobe Acrobat writes).
+    pub fn raw_string_value(&self, key: &str) -> Option<String> {
+        self.unwrap_as_trait().get_string_value(key)
+    }
+
+    /// LeanPDF patch: sets a string entry in the annotation dictionary.
+    pub fn set_raw_string_value(&mut self, key: &str, value: &str) -> Result<(), PdfiumError> {
+        self.unwrap_as_trait_mut().set_string_value(key, value)
+    }
+
     #[inline]
-    #[allow(dead_code)] // We don't currently use unwrap_as_trait_mut(), but we expect to in the future
     pub(crate) fn unwrap_as_trait_mut(&mut self) -> &mut dyn PdfPageAnnotationPrivate<'a> {
         match self {
             PdfPageAnnotation::Circle(annotation) => annotation,

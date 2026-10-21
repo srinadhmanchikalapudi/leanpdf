@@ -40,6 +40,8 @@ enum ViewAct {
     DragMove { pos: Pos2, rect: Rect },
     DragEnd { pos: Pos2, rect: Rect },
     Sticky { page: usize, pos: Pos2, rect: Rect },
+    /// A click that did not start a selection: it may land on a comment.
+    Click { page: usize, pos: Pos2, rect: Rect, double: bool },
 }
 
 fn to_pdf(rect: Rect, size: [f32; 2], pos: Pos2) -> [f32; 2] {
@@ -302,13 +304,14 @@ impl App {
                     if let Some(pos) = ptr {
                         acts.push(ViewAct::DragEnd { pos, rect });
                     }
-                } else if resp.clicked() {
+                } else if resp.double_clicked() || resp.clicked() {
                     if let Some(pos) = resp.interact_pointer_pos() {
                         if note_tool {
-                            acts.push(ViewAct::Sticky { page: i, pos, rect });
+                            if resp.clicked() {
+                                acts.push(ViewAct::Sticky { page: i, pos, rect });
+                            }
                         } else {
-                            acts.push(ViewAct::DragStart { page: i, pos, rect }); // a plain click clears the selection
-                            acts.push(ViewAct::DragEnd { pos, rect });
+                            acts.push(ViewAct::Click { page: i, pos, rect, double: resp.double_clicked() });
                         }
                     }
                 }
@@ -411,9 +414,37 @@ impl App {
                     }
                 }
             }
+            ViewAct::Click { page, pos, rect, double } => {
+                let p = to_pdf(rect, d.pages[page], pos);
+                let hit = d
+                    .annots
+                    .iter()
+                    .filter(|a| a.page as usize == page && p[0] >= a.rect[0] - 2.0 && p[0] <= a.rect[2] + 2.0 && p[1] >= a.rect[1] - 2.0 && p[1] <= a.rect[3] + 2.0)
+                    .min_by(|a, b| ((a.rect[2] - a.rect[0]) * (a.rect[3] - a.rect[1])).partial_cmp(&((b.rect[2] - b.rect[0]) * (b.rect[3] - b.rect[1]))).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|a| (a.page, a.index, a.rect));
+                match hit {
+                    Some((pg, idx, r)) => {
+                        d.flash = Some((pg as usize, r, Instant::now()));
+                        self.comment_sel = Some((pg, idx));
+                        self.comment_scroll = true;
+                        if double {
+                            // like Acrobat: a double click opens the comment for editing
+                            self.comments_open = true;
+                            self.chat_open = false;
+                            self.begin_edit(pg, idx, pos + vec2(20.0, 20.0));
+                        }
+                    }
+                    None => {
+                        d.sel = None;
+                        d.drag = None;
+                        self.seltool = None;
+                        self.comment_sel = None;
+                    }
+                }
+            }
             ViewAct::Sticky { page, pos, rect } => {
                 let p = to_pdf(rect, d.pages[page], pos);
-                self.editor = Some(NoteEditor { ctx: NoteCtx::Sticky { page, x: p[0], y: p[1] }, text: String::new(), pos, focus: true });
+                self.editor = Some(NoteEditor { ctx: NoteCtx::Sticky { page, x: p[0], y: p[1] }, text: String::new(), pos, focus: true, mono: false });
             }
         }
     }
@@ -533,7 +564,7 @@ impl App {
                             self.seltool = None;
                         }
                         "comment" => {
-                            self.editor = Some(NoteEditor { ctx: NoteCtx::Highlight { page, rects }, text: String::new(), pos: pos + vec2(-110.0, 50.0), focus: true });
+                            self.editor = Some(NoteEditor { ctx: NoteCtx::Highlight { page, rects }, text: String::new(), pos: pos + vec2(-110.0, 50.0), focus: true, mono: false });
                             self.seltool = None;
                         }
                         k => self.add_markup(page, k, rgb, None, rects),
@@ -553,7 +584,7 @@ impl App {
                     NoteCtx::Edit { .. } => "Edit comment",
                 };
                 egui::Window::new(title).fixed_pos(ed.pos).collapsible(false).resizable(false).default_width(300.0).show(ctx, |ui| {
-                    let r = ui.add(egui::TextEdit::multiline(&mut ed.text).desired_rows(4).desired_width(f32::INFINITY).hint_text("Type your comment…"));
+                    let r = ui.add(egui::TextEdit::multiline(&mut ed.text).font(if ed.mono { egui::TextStyle::Monospace } else { egui::TextStyle::Body }).desired_rows(if ed.mono { 8 } else { 4 }).desired_width(f32::INFINITY).hint_text("Type your comment…"));
                     if ed.focus {
                         r.request_focus();
                         ed.focus = false;

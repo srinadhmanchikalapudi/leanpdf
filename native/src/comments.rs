@@ -22,67 +22,97 @@ impl App {
             Goto(usize),
             Edit(usize),
             Delete(usize),
+            Copy(usize),
         }
         let mut act: Option<Act> = None;
         let accent = ui.visuals().hyperlink_color;
+        let selected_fill = ui.visuals().selection.bg_fill.gamma_multiply(0.35);
+        let sel = self.comment_sel;
+        let scroll_to = std::mem::take(&mut self.comment_scroll);
         let sp = self.scroll_speed();
         egui::ScrollArea::vertical().auto_shrink(false).wheel_scroll_multiplier(egui::vec2(sp, sp)).show(ui, |ui| {
             for (i, a) in d.annots.iter().enumerate() {
-                let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 6)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(capitalize(a.kind)).color(accent).strong());
-                        ui.label(RichText::new(format!("p.{}", a.page + 1)).weak().small());
-                        if let Some(au) = &a.author {
-                            ui.label(RichText::new(au).weak().small());
+                let is_sel = sel == Some((a.page, a.index));
+                let editable = !EDITABLE_EXCLUDED.contains(&a.kind);
+                let frame = egui::Frame::new()
+                    .fill(if is_sel { selected_fill } else { egui::Color32::TRANSPARENT })
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(6, 6))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        // header: kind, page, author, date; clicking it jumps to the comment
+                        let head = ui
+                            .horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(capitalize(a.kind)).color(accent).strong());
+                                ui.label(RichText::new(format!("p.{}", a.page + 1)).weak().small());
+                                if let Some(au) = &a.author {
+                                    ui.label(RichText::new(au).weak().small());
+                                }
+                                if let Some(m) = &a.modified {
+                                    ui.label(RichText::new(pdf_date(m)).weak().small());
+                                }
+                            })
+                            .response
+                            .interact(egui::Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if head.clicked() {
+                            act = Some(Act::Goto(i));
                         }
-                        if let Some(m) = &a.modified {
-                            ui.label(RichText::new(pdf_date(m)).weak().small());
+                        if let Some(c) = &a.contents {
+                            let r = comment_text(ui, i, c, a.mono);
+                            if r.double_clicked() && editable {
+                                act = Some(Act::Edit(i));
+                            } else if r.clicked() {
+                                act = Some(Act::Goto(i));
+                            }
                         }
+                        if let Some(t) = &a.text {
+                            ui.label(RichText::new(t).weak().small().italics());
+                        }
+                        // always visible, so the actions are easy to find
+                        ui.horizontal(|ui| {
+                            if editable && ui.small_button(if a.contents.is_some() { "Edit" } else { "Add note" }).clicked() {
+                                act = Some(Act::Edit(i));
+                            }
+                            if a.contents.is_some() && ui.small_button("Copy").clicked() {
+                                act = Some(Act::Copy(i));
+                            }
+                            if ui.small_button("Delete").clicked() {
+                                act = Some(Act::Delete(i));
+                            }
+                        });
                     });
-                    if let Some(c) = &a.contents {
-                        ui.label(c);
-                    }
-                    if let Some(t) = &a.text {
-                        ui.label(RichText::new(t).weak().small().italics());
-                    }
-                });
-                let resp = ui.interact(r.response.rect, ui.scope_id().with(("c", i)), egui::Sense::click());
-                if resp.clicked() {
-                    act = Some(Act::Goto(i));
-                }
-                if resp.hovered() {
-                    // buttons appear on hover
-                    let rect = r.response.rect;
-                    let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(rect.right_top() + vec2(-120.0, 2.0), vec2(116.0, 20.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
-                    if bui.small_button("Delete").clicked() {
-                        act = Some(Act::Delete(i));
-                    }
-                    if !EDITABLE_EXCLUDED.contains(&a.kind) && bui.small_button(if a.contents.is_some() { "Edit" } else { "Add note" }).clicked() {
-                        act = Some(Act::Edit(i));
-                    }
+                if is_sel && scroll_to {
+                    frame.response.scroll_to_me(Some(egui::Align::Center));
                 }
                 ui.separator();
             }
         });
         match act {
             Some(Act::Goto(i)) => {
-                let (page, rect) = {
+                let (page, index, rect) = {
                     let a = &self.doc.as_ref().unwrap().annots[i];
-                    (a.page, a.rect)
+                    (a.page, a.index, a.rect)
                 };
+                self.comment_sel = Some((page, index));
                 self.goto_page(page as usize, Some(rect));
                 if let Some(d) = &mut self.doc {
                     d.flash = Some((page as usize, rect, Instant::now()));
                 }
             }
             Some(Act::Edit(i)) => {
-                let (page, index, text) = {
+                let (page, index) = {
                     let a = &self.doc.as_ref().unwrap().annots[i];
-                    (a.page, a.index, a.contents.clone().unwrap_or_default())
+                    (a.page, a.index)
                 };
-                let pos = self.ctx.pointer_hover_pos().unwrap_or_default() + vec2(-320.0, 0.0);
-                self.editor = Some(NoteEditor { ctx: NoteCtx::Edit { page: page as usize, annot: index }, text, pos, focus: true });
+                let pos = self.ctx.pointer_hover_pos().unwrap_or_default() + vec2(-320.0, -40.0);
+                self.begin_edit(page, index, pos);
+            }
+            Some(Act::Copy(i)) => {
+                if let Some(c) = self.doc.as_ref().and_then(|d| d.annots[i].contents.clone()) {
+                    self.ctx.copy_text(c);
+                    self.toast("Copied");
+                }
             }
             Some(Act::Delete(i)) => {
                 let (page, index) = {
@@ -97,6 +127,7 @@ impl App {
                     == rfd::MessageDialogResult::Yes;
                 if yes {
                     let id = self.doc.as_ref().unwrap().id;
+                    self.comment_sel = None;
                     let (tx, rx) = channel();
                     let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::Delete { page, annot: index }, reply: tx });
                     self.jobs.push(Job::Edit(rx, id, page as usize));
@@ -104,6 +135,18 @@ impl App {
             }
             None => {}
         }
+    }
+
+    /// Opens the comment editor for an existing comment.
+    pub fn begin_edit(&mut self, page: u32, index: u32, pos: egui::Pos2) {
+        let Some(a) = self.doc.as_ref().and_then(|d| d.annots.iter().find(|a| a.page == page && a.index == index)) else { return };
+        if EDITABLE_EXCLUDED.contains(&a.kind) {
+            return;
+        }
+        let text = a.contents.clone().unwrap_or_default();
+        let mono = wants_mono(&text, a.mono);
+        let text = if mono { expand_tabs(&text) } else { text };
+        self.editor = Some(NoteEditor { ctx: NoteCtx::Edit { page: page as usize, annot: index }, text, pos, focus: true, mono });
     }
 
     // ---------- loading ----------
@@ -241,5 +284,71 @@ fn capitalize(s: &str) -> String {
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
         None => String::new(),
+    }
+}
+
+/// Comments pasted from code or a table need a monospace font and their line breaks.
+pub fn wants_mono(text: &str, flagged: bool) -> bool {
+    flagged || text.contains('\t') || text.lines().any(|l| l.starts_with("  ") || l.trim().contains("  "))
+}
+
+/// Tabs become spaces up to the next multiple of 8, so columns line up in a monospace font.
+pub fn expand_tabs(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split('\n') {
+        let mut col = 0usize;
+        for ch in line.chars() {
+            if ch == '\t' {
+                let n = 8 - (col % 8);
+                out.extend(std::iter::repeat(' ').take(n));
+                col += n;
+            } else {
+                out.push(ch);
+                col += 1;
+            }
+        }
+        out.push('\n');
+    }
+    out.pop();
+    out
+}
+
+/// The text of a comment, keeping its line breaks; code and tables in a monospace box.
+fn comment_text(ui: &mut egui::Ui, i: usize, text: &str, flagged_mono: bool) -> egui::Response {
+    if wants_mono(text, flagged_mono) {
+        let shown = expand_tabs(text);
+        egui::Frame::new()
+            .fill(ui.visuals().extreme_bg_color)
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::symmetric(6, 4))
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt(("comment-mono", i))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| ui.add(egui::Label::new(RichText::new(shown).monospace().size(12.5)).extend().sense(egui::Sense::click())))
+                    .inner
+            })
+            .inner
+    } else {
+        ui.add(egui::Label::new(text).wrap().sense(egui::Sense::click()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tabs_line_up_columns() {
+        assert_eq!(expand_tabs("Item\tQty\nApple\t3"), "Item    Qty\nApple   3");
+    }
+
+    #[test]
+    fn tables_and_code_are_detected() {
+        assert!(wants_mono("a\tb", false));
+        assert!(wants_mono("if x {\n    y();\n}", false));
+        assert!(wants_mono("Name  Qty", false));
+        assert!(wants_mono("plain text", true));
+        assert!(!wants_mono("Verify this number with finance", false));
     }
 }

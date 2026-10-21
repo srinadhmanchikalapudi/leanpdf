@@ -12,7 +12,7 @@
   pdfium.dll is downloaded automatically (pdfium-binaries, Chromium build 7881) when pdfium\pdfium.dll is missing.
 #>
 param(
-    [string] $Version = "0.4.1",
+    [string] $Version = "0.4.2",
     [switch] $Installer,
     [switch] $SkipTests
 )

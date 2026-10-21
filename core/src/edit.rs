@@ -103,7 +103,7 @@ macro_rules! finish_markup {
         }
         a.set_stroke_color(PdfColor::new($rgb[0], $rgb[1], $rgb[2], 255)).map_err(|e| e.to_string())?;
         if let Some(n) = $note {
-            a.set_contents(n).map_err(|e| e.to_string())?;
+            a.set_contents(&adobe_newlines(n)).map_err(|e| e.to_string())?;
         }
         a.set_creator($author).map_err(|e| e.to_string())?;
         a.set_modification_date(Utc::now()).map_err(|e| e.to_string())?;
@@ -148,7 +148,7 @@ pub fn add_note(doc: &PdfDocument<'static>, index: u32, x: f32, y: f32, text: &s
     let mut page = open_page(doc, index)?;
     let (pw, ph) = (page.width().value, page.height().value);
     let (x, y) = (x.clamp(0.0, pw - 20.0), y.clamp(20.0, ph));
-    let mut a = page.annotations_mut().create_text_annotation(text).map_err(|e| e.to_string())?;
+    let mut a = page.annotations_mut().create_text_annotation(&adobe_newlines(text)).map_err(|e| e.to_string())?;
     a.set_bounds(PdfRect::new_from_values(y - 20.0, x, y, x + 20.0)).map_err(|e| e.to_string())?;
     a.set_stroke_color(PdfColor::new(255, 214, 0, 255)).map_err(|e| e.to_string())?;
     a.set_creator(author).map_err(|e| e.to_string())?;
@@ -159,10 +159,50 @@ pub fn add_note(doc: &PdfDocument<'static>, index: u32, x: f32, y: f32, text: &s
     Ok(())
 }
 
+/// Acrobat separates the lines of a comment with a carriage return; use the same.
+fn adobe_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', "\r")
+}
+
+/// True when the rich-text copy of a comment (/RC) asks for a monospace font.
+pub fn rc_is_monospace(rc: &str) -> bool {
+    let l = rc.to_lowercase();
+    l.split("font-family:").skip(1).any(|rest| {
+        let family: String = rest.chars().take_while(|c| *c != ';' && *c != '"' && *c != '\'').collect();
+        ["courier", "consolas", "mono", "menlo", "lucida console", "code", "fixed"].iter().any(|m| family.contains(m))
+    })
+}
+
+/// The XHTML Acrobat keeps in /RC for a comment, in the same shape Acrobat writes it.
+fn rich_text_xhtml(text: &str, mono: bool) -> String {
+    let mut esc = String::new();
+    for ch in text.replace("\r\n", "\n").chars() {
+        match ch {
+            '&' => esc.push_str("&amp;"),
+            '<' => esc.push_str("&lt;"),
+            '>' => esc.push_str("&gt;"),
+            '\n' | '\r' => esc.push_str("&#13;"),
+            '\t' => esc.push_str("&#9;"),
+            c => esc.push(c),
+        }
+    }
+    let font = if mono { ";font-family:Courier New,monospace" } else { "" };
+    format!(
+        "<?xml version=\"1.0\"?><body xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" \
+         xfa:APIVersion=\"Acrobat:11.0.0\" xfa:spec=\"2.0.2\"><p dir=\"ltr\"><span dir=\"ltr\" \
+         style=\"font-size:12.0pt;text-align:left;color:#000000;font-weight:normal;font-style:normal{font}\">{esc}</span></p></body>"
+    )
+}
+
 pub fn set_contents(doc: &PdfDocument<'static>, index: u32, annot: u32, text: &str) -> Result<(), String> {
     let page = open_page(doc, index)?;
     let mut a = page.annotations().get(annot as usize).map_err(|e| e.to_string())?;
-    a.set_contents(text).map_err(|e| e.to_string())?;
+    // Acrobat shows /RC (rich text) in preference to /Contents when both exist, so an edit must update both.
+    let old_rc = a.raw_string_value("RC");
+    a.set_contents(&adobe_newlines(text)).map_err(|e| e.to_string())?;
+    if let Some(rc) = old_rc {
+        a.set_raw_string_value("RC", &rich_text_xhtml(text, rc_is_monospace(&rc))).map_err(|e| e.to_string())?;
+    }
     a.set_modification_date(Utc::now()).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -172,4 +212,31 @@ pub fn delete(doc: &PdfDocument<'static>, index: u32, annot: u32) -> Result<(), 
     let annots = page.annotations_mut();
     let a = annots.get(annot as usize).map_err(|e| e.to_string())?;
     annots.delete_annotation(a).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monospace_is_read_from_rich_text() {
+        assert!(rc_is_monospace(r#"<span style="font-size:12pt;font-family:Consolas">x</span>"#));
+        assert!(rc_is_monospace("<span style='font-family: Courier New'>x</span>"));
+        assert!(!rc_is_monospace(r#"<span style="font-family:Helvetica,sans-serif">x</span>"#));
+        assert!(!rc_is_monospace("<span>plain</span>"));
+    }
+
+    #[test]
+    fn rich_text_is_escaped_and_keeps_lines_and_tabs() {
+        let x = rich_text_xhtml("a<b & c\n\td", true);
+        assert!(x.contains("a&lt;b &amp; c&#13;&#9;d"), "{x}");
+        assert!(x.contains("Courier New"));
+        assert!(rc_is_monospace(&x));
+        assert!(!rc_is_monospace(&rich_text_xhtml("x", false)));
+    }
+
+    #[test]
+    fn lines_use_carriage_returns() {
+        assert_eq!(adobe_newlines("a\r\nb\nc"), "a\rb\rc");
+    }
 }

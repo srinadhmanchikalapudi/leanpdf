@@ -8,7 +8,7 @@ type Settings = { folder: string | null; last_file: string | null; last_page: nu
 type DocInfo = { id: number; page_count: number; pages: [number, number][] };
 type Rect = [number, number, number, number]; // left, bottom, right, top (PDF points)
 type Annot = {
-  page: number; index: number; kind: string; author: string | null; contents: string | null;
+  page: number; index: number; kind: string; author: string | null; contents: string | null; mono?: boolean;
   modified: string | null; text: string | null; rect: Rect;
 };
 type FileEntry = { path: string; rel: string; status: string; pages: number; note: string | null };
@@ -670,7 +670,7 @@ function renderComments() {
         .join("");
       const editable = !["text box", "stamp", "attachment", "caret"].includes(a.kind);
       const acts = `<div class="acts">${editable ? `<button data-act="edit">${a.contents ? "Edit" : "Add note"}</button>` : ""}<button class="del" data-act="del">Delete</button></div>`;
-      return `<div class="c" data-i="${i}"><div class="meta">${meta}</div>${a.contents ? `<div class="body">${esc(a.contents)}</div>` : ""}${a.text ? `<div class="quote">${esc(a.text)}</div>` : ""}${acts}</div>`;
+      return `<div class="c" data-i="${i}"><div class="meta">${meta}</div>${a.contents ? `<div class="body${a.mono || /	|^ {2,}|\S {2,}\S/m.test(a.contents) ? " mono" : ""}">${esc(a.contents)}</div>` : ""}${a.text ? `<div class="quote">${esc(a.text)}</div>` : ""}${acts}</div>`;
     })
     .join("");
 }

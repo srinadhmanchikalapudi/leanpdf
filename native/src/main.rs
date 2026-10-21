@@ -129,6 +129,8 @@ pub struct NoteEditor {
     pub text: String,
     pub pos: egui::Pos2,
     pub focus: bool,
+    /// Show the editor in a monospace font (code or a table).
+    pub mono: bool,
 }
 
 pub struct OpenCtx {
@@ -204,6 +206,9 @@ pub struct App {
     pub chat_open: bool,
     pub chats: HashMap<u32, chat::Chat>,
     pub ai: chat::AiUi,
+    /// (page, index) of the comment last clicked, in the panel or on the page.
+    pub comment_sel: Option<(u32, u32)>,
+    pub comment_scroll: bool,
     pub settings_win: settings_ui::SettingsWin,
     pub whatsnew: Option<settings_ui::WhatsNew>,
     pub updater: update::Updater,
@@ -285,6 +290,8 @@ impl App {
             chat_open: false,
             chats: HashMap::new(),
             ai: chat::AiUi::default(),
+            comment_sel: None,
+            comment_scroll: false,
             settings_win: settings_ui::SettingsWin::default(),
             whatsnew: None,
             updater: update::Updater::new(),

@@ -120,6 +120,8 @@ pub struct Annot {
     pub kind: &'static str,
     pub author: Option<String>,
     pub contents: Option<String>,
+    /// The comment was written in a monospace font (code, tables); Acrobat records that in /RC.
+    pub mono: bool,
     pub modified: Option<String>,
     /// Text under a highlight/underline/strikeout.
     pub text: Option<String>,
@@ -533,7 +535,8 @@ fn annotations(doc: &PdfDocument<'static>, from: u32, to: u32) -> Vec<Annot> {
                 index: ai as u32,
                 kind,
                 author: annot.creator().filter(|s| !s.is_empty()),
-                contents: annot.contents().filter(|s| !s.trim().is_empty()),
+                contents: annot.contents().filter(|s| !s.trim().is_empty()).map(|s| s.replace("\r\n", "\n").replace('\r', "\n")),
+                mono: annot.raw_string_value("RC").is_some_and(|rc| edit::rc_is_monospace(&rc)),
                 modified: annot.modification_date(),
                 text: under,
                 rect: [b.left().value, b.bottom().value, b.right().value, b.top().value],

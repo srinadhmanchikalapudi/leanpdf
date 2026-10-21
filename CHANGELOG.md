@@ -2,6 +2,11 @@
 
 Each version's notes are shown inside the app (after an update, and in the update bar) and become the GitHub release notes. Add a `## x.y.z` section before publishing a version.
 
+## 0.4.2
+
+- **Edit Adobe comments.** Comments written in Adobe Acrobat can now be edited (and copied or deleted) in LeanPDF. The Edit, Copy and Delete buttons are always shown under each comment instead of appearing only on hover, and double-clicking a comment, in the panel or on the page, opens it for editing. Clicking a comment on the page selects it in the panel. Text boxes, stamps and attachments are still view-only.
+- **Tables and code look right.** Comments you pasted into Acrobat now keep their line breaks and tab stops and show in a monospace box, so tables line up and code keeps its indentation. They also stay correct when opened again in Acrobat after an edit in LeanPDF: Acrobat's rich-text copy of the comment is updated together with the plain text, so an edit no longer shows the old text.
+
 ## 0.4.1
 
 - **Fixed:** "Could not reach OpenRouter: native-tls: unable to find any user-specified roots in the final cert chain". LeanPDF now uses Windows' own certificate store for secure connections, so the AI model list, AI answers and the update check all connect. If you saw that error, install this version once by hand; after that updates install themselves.
