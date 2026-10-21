@@ -153,6 +153,9 @@ impl App {
         let scroll_to_active = std::mem::take(&mut self.tab_scroll);
         let mut activate = None;
         let mut close = None;
+        let drag_key = egui::Id::new("tab-drag");
+        let mut dragging: Option<u32> = ui.ctx().data(|d| d.get_temp(drag_key));
+        let mut rects: Vec<(u32, egui::Rect)> = Vec::new();
         ui.add_space(3.0);
         egui::ScrollArea::horizontal().id_salt("tabs").auto_shrink([false, true]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -166,9 +169,19 @@ impl App {
                     if is_active {
                         text = text.strong();
                     }
-                    let r = ui.add(egui::Button::selectable(is_active, text)).on_hover_text(path);
+                    let mut r = ui.add(egui::Button::selectable(is_active, text)).interact(egui::Sense::click_and_drag());
+                    if dragging.is_none() {
+                        r = r.on_hover_text(path);
+                    }
                     if r.clicked() {
                         activate = Some(*id);
+                    }
+                    if r.drag_started_by(egui::PointerButton::Primary) {
+                        dragging = Some(*id);
+                        activate = Some(*id);
+                    }
+                    if dragging == Some(*id) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                     }
                     if r.middle_clicked() {
                         close = Some(*id);
@@ -180,11 +193,39 @@ impl App {
                     if x.clicked() {
                         close = Some(*id);
                     }
+                    rects.push((*id, r.rect.union(x.rect)));
                     ui.add_space(6.0);
                 }
             });
         });
         ui.add_space(3.0);
+        // dragging a tab: it swaps places with a neighbour once the pointer passes that neighbour's centre
+        if let Some(did) = dragging {
+            let (down, ptr) = ui.input(|i| (i.pointer.primary_down(), i.pointer.latest_pos()));
+            if down {
+                if let (Some(px), Some(pos)) = (ptr.map(|p| p.x), rects.iter().position(|(id, _)| *id == did)) {
+                    let target = if pos + 1 < rects.len() && px > rects[pos + 1].1.center().x {
+                        Some(pos + 1)
+                    } else if pos > 0 && px < rects[pos - 1].1.center().x {
+                        Some(pos - 1)
+                    } else {
+                        None
+                    };
+                    if let Some(t) = target {
+                        if let (Some(a), Some(b)) = (self.tab_order.iter().position(|&x| x == did), self.tab_order.iter().position(|&x| x == rects[t].0)) {
+                            self.tab_order.swap(a, b);
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                }
+                ui.ctx().data_mut(|d| d.insert_temp(drag_key, did));
+            } else {
+                ui.ctx().data_mut(|d| d.remove::<u32>(drag_key));
+                self.save_ui_state();
+            }
+        } else {
+            ui.ctx().data_mut(|d| d.remove::<u32>(drag_key));
+        }
         if let Some(id) = close {
             self.close_tab(id);
         } else if let Some(id) = activate {

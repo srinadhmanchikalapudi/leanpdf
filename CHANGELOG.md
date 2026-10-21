@@ -2,6 +2,10 @@
 
 Each version's notes are shown inside the app (after an update, and in the update bar) and become the GitHub release notes. Add a `## x.y.z` section before publishing a version.
 
+## 0.4.3
+
+- **Drag tabs to reorder them**, like in Acrobat. Press and hold a tab and drag it left or right; the other tabs make room as you pass them. The new order is remembered when you restart.
+
 ## 0.4.2
 
 - **Edit Adobe comments.** Comments written in Adobe Acrobat can now be edited (and copied or deleted) in LeanPDF. The Edit, Copy and Delete buttons are always shown under each comment instead of appearing only on hover, and double-clicking a comment, in the panel or on the page, opens it for editing. Clicking a comment on the page selects it in the panel. Text boxes, stamps and attachments are still view-only.

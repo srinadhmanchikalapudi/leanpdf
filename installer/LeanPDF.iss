@@ -4,10 +4,10 @@
 ;   /DOutputDir=...      where the setup program is written
 
 #ifndef AppVersion
-  #define AppVersion "0.4.2"
+  #define AppVersion "0.4.3"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\dist\LeanPDF-0.4.2-win-x64"
+  #define SourceDir "..\dist\LeanPDF-0.4.3-win-x64"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\dist"
