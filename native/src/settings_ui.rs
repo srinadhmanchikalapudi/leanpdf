@@ -113,6 +113,19 @@ impl App {
             self.save_settings();
             self.apply_look();
         }
+        let mut badge = self.settings.page_badge.clone().unwrap_or_else(|| "bottom".into());
+        let before = badge.clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Page number on the page");
+            ui.radio_value(&mut badge, "bottom".to_string(), "Bottom");
+            ui.radio_value(&mut badge, "bottom-right".to_string(), "Bottom right");
+            ui.radio_value(&mut badge, "top-right".to_string(), "Top right");
+            ui.radio_value(&mut badge, "off".to_string(), "Off");
+        });
+        if badge != before {
+            self.settings.page_badge = Some(badge);
+            self.save_settings();
+        }
         let mut scale = self.settings.ui_scale.unwrap_or(1.0);
         let r = ui.add(egui::Slider::new(&mut scale, 0.8..=1.6).step_by(0.05).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).text("Interface size"));
         if r.changed() {
@@ -147,6 +160,7 @@ impl App {
             self.settings.scroll_speed = None;
             self.settings.theme = None;
             self.settings.ui_scale = None;
+            self.settings.page_badge = None;
             self.settings.author = None;
             self.settings.reopen_tabs = None;
             self.save_settings();

@@ -523,7 +523,33 @@ impl App {
 
     // ---------- floating tools ----------
 
+    /// A small "Page 5 / 20" label over the page view, so the page number is always in sight.
+    fn paint_page_badge(&self, ctx: &egui::Context) {
+        let Some(d) = &self.doc else { return };
+        let place = self.settings.page_badge.as_deref().unwrap_or("bottom");
+        if place == "off" || d.pages.is_empty() || self.view_rect.width() < 100.0 {
+            return;
+        }
+        let r = self.view_rect;
+        let (anchor, pos) = match place {
+            "bottom-right" => (egui::Align2::RIGHT_BOTTOM, egui::pos2(r.right() - 22.0, r.bottom() - 14.0)),
+            "top-right" => (egui::Align2::RIGHT_TOP, egui::pos2(r.right() - 22.0, r.top() + 10.0)),
+            _ => (egui::Align2::CENTER_BOTTOM, egui::pos2(r.center().x, r.bottom() - 14.0)),
+        };
+        let text = format!("Page {} / {}", d.cur_page.min(d.pages.len() - 1) + 1, d.pages.len());
+        egui::Area::new(egui::Id::new("page-badge")).pivot(anchor).fixed_pos(pos).order(egui::Order::Foreground).interactable(false).show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 205))
+                .corner_radius(12.0)
+                .inner_margin(egui::Margin::symmetric(12, 5))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(text).color(egui::Color32::from_gray(235)).size(14.0).strong());
+                });
+        });
+    }
+
     pub fn floating(&mut self, ctx: &egui::Context) {
+        self.paint_page_badge(ctx);
         // selection toolbar
         if let (Some(pos), true) = (self.seltool, self.doc.as_ref().is_some_and(|d| d.sel.is_some())) {
             let mut act: Option<(&str, [u8; 3])> = None;

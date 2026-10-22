@@ -22,6 +22,8 @@ pub struct Settings {
     pub theme: Option<String>,
     /// Interface size, 1.0 = normal.
     pub ui_scale: Option<f32>,
+    /// Where the floating page number sits: "bottom", "bottom-right", "top-right" or "off" (default bottom).
+    pub page_badge: Option<String>,
     /// Reopen the tabs from last time on start (default true).
     pub reopen_tabs: Option<bool>,
     /// Look for a newer version on start, at most once a day (default true).

@@ -2,6 +2,10 @@
 
 Each version's notes are shown inside the app (after an update, and in the update bar) and become the GitHub release notes. Add a `## x.y.z` section before publishing a version.
 
+## 0.4.4
+
+- **Page number on the page.** A small "Page 5 / 20" label floats over the bottom of the page view and updates as you scroll, so you always know where you are without looking up at the toolbar. Move it to the bottom right or top right, or turn it off, under Settings, Page number on the page.
+
 ## 0.4.3
 
 - **Drag tabs to reorder them**, like in Acrobat. Press and hold a tab and drag it left or right; the other tabs make room as you pass them. The new order is remembered when you restart.
