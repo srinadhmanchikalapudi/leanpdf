@@ -1,0 +1,2 @@
+# PDFs are binary: line-ending conversion would corrupt their byte offsets (the engine tests read them with a strict parser)
+*.pdf binary
