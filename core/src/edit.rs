@@ -174,7 +174,7 @@ pub fn rc_is_monospace(rc: &str) -> bool {
 }
 
 /// The XHTML Acrobat keeps in /RC for a comment, in the same shape Acrobat writes it.
-fn rich_text_xhtml(text: &str, mono: bool) -> String {
+pub(crate) fn rich_text_xhtml(text: &str, mono: bool) -> String {
     let mut esc = String::new();
     for ch in text.replace("\r\n", "\n").chars() {
         match ch {

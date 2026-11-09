@@ -6,7 +6,9 @@ use eframe::egui::{self, vec2, RichText};
 use leanpdf_core::pdf::EditOp;
 
 const CHUNK: u32 = 20;
-const EDITABLE_EXCLUDED: [&str; 4] = ["text box", "stamp", "attachment", "caret"];
+/// The tallest a comment's text gets in the panel before it scrolls.
+const MAX_COMMENT_H: f32 = 190.0;
+const EDITABLE_EXCLUDED: [&str; 3] = ["stamp", "attachment", "caret"];
 
 impl App {
     pub fn comments_panel(&mut self, ui: &mut egui::Ui) {
@@ -202,13 +204,28 @@ impl App {
                 let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::Note { page: page as u32, x, y, text, author: self.author() }, reply: tx });
                 self.jobs.push(Job::Edit(rx, id, page));
             }
+            NoteCtx::TextBox { page, rect } => {
+                self.box_tool = false;
+                if text.is_empty() {
+                    return;
+                }
+                let (tx, rx) = channel();
+                let _ = self.viewer.send(Cmd::AddTextBox { doc: id, page: page as u32, rect, text, author: self.author(), reply: tx });
+                self.jobs.push(Job::Edit(rx, id, page));
+            }
             NoteCtx::Highlight { page, rects } => {
                 let c = self.colors[0];
                 self.add_markup(page, "highlight", [c.r(), c.g(), c.b()], Some(text), rects);
             }
             NoteCtx::Edit { page, annot } => {
+                let is_text_box = d.annots.iter().any(|a| a.page as usize == page && a.index == annot && a.kind == "text box");
                 let (tx, rx) = channel();
-                let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::SetContents { page: page as u32, annot, text }, reply: tx });
+                if is_text_box {
+                    // a text box needs a new drawn appearance, which is written as a separate update
+                    let _ = self.viewer.send(Cmd::EditTextBox { doc: id, page: page as u32, annot, text, reply: tx });
+                } else {
+                    let _ = self.viewer.send(Cmd::Edit { doc: id, op: EditOp::SetContents { page: page as u32, annot, text }, reply: tx });
+                }
                 self.jobs.push(Job::Edit(rx, id, page));
             }
         }
@@ -322,15 +339,22 @@ fn comment_text(ui: &mut egui::Ui, i: usize, text: &str, flagged_mono: bool) -> 
             .corner_radius(4.0)
             .inner_margin(egui::Margin::symmetric(6, 4))
             .show(ui, |ui| {
-                egui::ScrollArea::horizontal()
+                egui::ScrollArea::both()
                     .id_salt(("comment-mono", i))
+                    .max_height(MAX_COMMENT_H)
                     .auto_shrink([false, true])
                     .show(ui, |ui| ui.add(egui::Label::new(RichText::new(shown).monospace().size(12.5)).extend().sense(egui::Sense::click())))
                     .inner
             })
             .inner
     } else {
-        ui.add(egui::Label::new(text).wrap().sense(egui::Sense::click()))
+        // a very long comment scrolls inside its card, so the buttons below it stay in reach
+        egui::ScrollArea::vertical()
+            .id_salt(("comment-text", i))
+            .max_height(MAX_COMMENT_H)
+            .auto_shrink([false, true])
+            .show(ui, |ui| ui.add(egui::Label::new(text).wrap().sense(egui::Sense::click())))
+            .inner
     }
 }
 

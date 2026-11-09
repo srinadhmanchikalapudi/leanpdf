@@ -10,6 +10,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const TEXT_CHUNK: u32 = 40;
 
+/// Buttons above the question box: (label, tooltip).
+const QUICK: [(&str, &str); 4] = [
+    ("Summarize", "A short overview with the key ideas"),
+    ("Key points", "What to remember, grouped by topic"),
+    ("Quiz me", "Eight practice questions with answers"),
+    ("Explain this page", "Explains the page you are reading"),
+];
+
 pub struct ChatMsg {
     pub role: Role,
     pub text: String,
@@ -42,6 +50,8 @@ pub struct Chat {
     pub texts_done: bool,
     pub texts_next: u32,
     pub pending: Option<String>,
+    /// What to rank pages by instead of the question (quick actions rank by nothing, so the opening pages and an even sample go out).
+    pub rank_override: Option<String>,
 }
 
 #[derive(Default)]
@@ -70,6 +80,7 @@ enum ChatAct {
     Settings,
     Cite(usize, usize), // message index, citation index
     Copy(usize),
+    Quick(usize),
 }
 
 impl App {
@@ -141,7 +152,7 @@ impl App {
         let chat = self.chats.entry(doc_id).or_default();
         let busy = chat.stream.is_some() || chat.pending.is_some();
         let accent = ui.visuals().hyperlink_color;
-        let footer_h = 128.0;
+        let footer_h = 158.0;
         let avail = ui.available_height();
 
         egui::ScrollArea::vertical().id_salt("chat-msgs").stick_to_bottom(true).auto_shrink(false).max_height((avail - footer_h).max(80.0)).show(ui, |ui| {
@@ -209,6 +220,14 @@ impl App {
         let input_id = egui::Id::new("chat_input");
         let focused = ui.memory(|m| m.has_focus(input_id));
         let enter = focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Quick:").small().weak());
+            for (i, (label, tip)) in QUICK.iter().enumerate() {
+                if ui.add_enabled(!busy, egui::Button::new(RichText::new(*label).small()).small()).on_hover_text(*tip).clicked() {
+                    acts.push(ChatAct::Quick(i));
+                }
+            }
+        });
         ui.add(egui::TextEdit::multiline(&mut chat.input).id(input_id).desired_rows(3).desired_width(f32::INFINITY).hint_text("Ask a question…  (Enter to send, Shift+Enter for a new line)"));
         ui.horizontal(|ui| {
             if busy {
@@ -232,6 +251,7 @@ impl App {
                     }
                 }
                 ChatAct::Settings => self.open_settings(crate::settings_ui::SettingsTab::Ai, None),
+                ChatAct::Quick(i) => self.quick_ask(i),
                 ChatAct::Cite(mi, ci) => self.cite_click(doc_id, mi, ci),
                 ChatAct::Copy(mi) => {
                     if let Some(m) = self.chats.get(&doc_id).and_then(|c| c.msgs.get(mi)) {
@@ -241,6 +261,25 @@ impl App {
                 }
             }
         }
+    }
+
+    /// One-click questions: summary, key points, a quiz, or an explanation of the page being read.
+    fn quick_ask(&mut self, which: usize) {
+        let Some(d) = &self.doc else { return };
+        let (id, page) = (d.id, d.cur_page + 1);
+        let prompt = match which {
+            0 => "Summarize this document: a short overview paragraph, then 5 to 8 bullet points with the key ideas, citing pages.".to_string(),
+            1 => "List the most important points and terms to remember from this document as bullets, grouped by topic, with page citations.".to_string(),
+            2 => "Write 8 quiz questions (a mix of multiple choice and short answer) that test understanding of this document. Put the answers at the end, each with its page citation.".to_string(),
+            _ => format!("Explain page {page} in simple terms, with a short example if it helps. Focus on what is on that page."),
+        };
+        let chat = self.chats.entry(id).or_default();
+        if chat.stream.is_some() || chat.pending.is_some() {
+            return;
+        }
+        chat.input = prompt;
+        chat.rank_override = Some(String::new());
+        self.ask();
     }
 
     fn cite_click(&mut self, doc_id: u32, mi: usize, ci: usize) {
@@ -360,13 +399,14 @@ impl App {
         }
 
         let budget = if use_folder { 36_000 } else { 60_000 };
-        let picked = rag::select_pages(&chat.texts, &question, cur, budget);
+        let rank_q = chat.rank_override.take().unwrap_or_else(|| question.clone());
+        let picked = rag::select_pages(&chat.texts, &rank_q, cur, budget);
         let mut excerpts: Vec<Excerpt> =
             picked.iter().map(|&i| Excerpt { file: name.clone(), path: path.clone(), page: chat.texts[i].0, text: chat.texts[i].1.clone() }).collect();
         let own_pages = excerpts.len();
         if use_folder {
             if let Some(root) = folder {
-                if let Ok(hits) = index::page_texts(&db, &root, &rag::terms(&question), "", 14) {
+                if let Ok(hits) = index::page_texts(&db, &root, &rag::terms(&rank_q), "", 14) {
                     let mut chars = 0usize;
                     for h in hits {
                         if h.path == path || chars > 24_000 {

@@ -19,6 +19,15 @@ jobs:
             native
             src-tauri
 
+      - name: Get pdfium.dll (the engine tests open real PDFs)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force pdfium | Out-Null
+          Invoke-WebRequest "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-win-x64.tgz" -OutFile pdfium.tgz
+          New-Item -ItemType Directory -Force pdfium-x | Out-Null
+          tar -xzf pdfium.tgz -C pdfium-x
+          Copy-Item pdfium-x/bin/pdfium.dll pdfium/ -Force
+
       - name: Test the core
         run: cargo test --manifest-path core/Cargo.toml
 

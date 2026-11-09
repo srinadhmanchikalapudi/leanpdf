@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+lopdf = { version = "0.46.0", default-features = false }
 pdfium-render = { path = "../vendor/pdfium-render", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 png = "0.18.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }

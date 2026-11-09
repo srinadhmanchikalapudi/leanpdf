@@ -113,7 +113,18 @@ impl App {
             .map(|f| f.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or(f).to_string())
             .unwrap_or_else(|| "Choose a folder…".into());
 
-        ui.add_space(4.0);
+        self.side_tabs(ui);
+        match self.side_tab {
+            crate::nav::SideTab::Outline => {
+                self.outline_panel(ui);
+                return;
+            }
+            crate::nav::SideTab::Pages => {
+                self.thumbs_panel(ui);
+                return;
+            }
+            crate::nav::SideTab::Files => {}
+        }
         ui.horizontal(|ui| {
             let b = ui.add(egui::Button::new(RichText::new(format!("Folder: {folder_name}")).strong()).frame(false));
             if b.on_hover_text(self.settings.folder.clone().unwrap_or_else(|| "Choose the folder to search".into())).clicked() {
@@ -364,7 +375,18 @@ impl App {
             Ok(info) => {
                 let name = base_name(&c.path.replace('\\', "/")).to_string();
                 let n = info.pages.len();
-                let page = c.page.min(n.saturating_sub(1));
+                let mut page = c.page.min(n.saturating_sub(1));
+                // a plain open (not from a search hit or a restored tab) resumes where the file was left
+                let mut resumed = false;
+                if c.page == 0 && c.terms.is_empty() && c.hit_pages.is_empty() {
+                    if let Some((_, p)) = self.settings.positions.iter().find(|(pp, _)| *pp == c.path) {
+                        if *p > 0 && (*p as usize) < n {
+                            page = *p as usize;
+                            resumed = true;
+                        }
+                    }
+                }
+                self.push_recent(&c.path);
                 let id = info.id;
                 let mut d = Doc {
                     id,
@@ -391,6 +413,14 @@ impl App {
                     drag: None,
                     found: HashMap::new(),
                     flash: None,
+                    rot: 0,
+                    outline: None,
+                    outline_asked: false,
+                    thumbs: HashMap::new(),
+                    thumb_inflight: HashSet::new(),
+                    thumb_seen_page: usize::MAX,
+                    box_drag: None,
+                    find: crate::find::FindState::default(),
                 };
                 d.layout();
                 d.scroll_y = (d.tops[page] - 10.0).max(0.0);
@@ -411,6 +441,9 @@ impl App {
                     let pages = if c.hit_pages.is_empty() { vec![page] } else { c.hit_pages };
                     self.request_highlights(&c.terms, &pages);
                     self.remember();
+                    if resumed {
+                        self.toast(format!("Continuing at page {}", page + 1));
+                    }
                 }
             }
             Err(e) => {
@@ -433,6 +466,13 @@ impl App {
                 }
             }
         }
+    }
+
+    pub fn push_recent(&mut self, path: &str) {
+        self.settings.recent.retain(|p| p != path);
+        self.settings.recent.insert(0, path.to_string());
+        self.settings.recent.truncate(20);
+        let _ = settings::save(&self.dir, &self.settings);
     }
 
     pub fn reveal_current(&mut self) {

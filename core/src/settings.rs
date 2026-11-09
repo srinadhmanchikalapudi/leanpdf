@@ -24,6 +24,10 @@ pub struct Settings {
     pub ui_scale: Option<f32>,
     /// Where the floating page number sits: "bottom", "bottom-right", "top-right" or "off" (default bottom).
     pub page_badge: Option<String>,
+    /// Files opened most recently, newest first.
+    pub recent: Vec<String>,
+    /// The last page read in each file (newest first), so a file reopens where it was left.
+    pub positions: Vec<(String, u32)>,
     /// Reopen the tabs from last time on start (default true).
     pub reopen_tabs: Option<bool>,
     /// Look for a newer version on start, at most once a day (default true).

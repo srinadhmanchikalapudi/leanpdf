@@ -3,3 +3,4 @@ pub mod edit;
 pub mod index;
 pub mod pdf;
 pub mod settings;
+pub mod textbox;

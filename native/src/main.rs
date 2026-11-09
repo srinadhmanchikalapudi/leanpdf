@@ -2,7 +2,10 @@
 
 mod chat;
 mod comments;
+mod find;
 mod llm;
+mod nav;
+mod print;
 mod rag;
 mod settings_ui;
 mod side;
@@ -50,7 +53,7 @@ fn spawn_idle_trimmer() {}
 use eframe::egui;
 use leanpdf_core::edit::Selection;
 use leanpdf_core::index::{self, FileEntry, FileHits, IndexEvent, Indexer, Summary};
-use leanpdf_core::pdf::{self, Annot, Cmd, DocInfo};
+use leanpdf_core::pdf::{self, Annot, Cmd, DocInfo, FindMatch, OutlineItem};
 use leanpdf_core::settings::{self, Settings};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -116,12 +119,24 @@ pub struct Doc {
     pub drag: Option<DragState>,
     pub found: HashMap<usize, Vec<Rect4>>,
     pub flash: Option<(usize, Rect4, Instant)>,
+    /// Quarter turns clockwise the view is turned by (the file is not changed).
+    pub rot: u8,
+    pub outline: Option<Vec<OutlineItem>>,
+    pub outline_asked: bool,
+    pub thumbs: HashMap<usize, egui::TextureHandle>,
+    pub thumb_inflight: HashSet<usize>,
+    pub thumb_seen_page: usize,
+    pub find: find::FindState,
+    /// A text box being drawn: page, start and current position as fractions of the page's width and height.
+    pub box_drag: Option<(usize, [f32; 2], [f32; 2])>,
 }
 
 pub enum NoteCtx {
     Sticky { page: usize, x: f32, y: f32 },
     Highlight { page: usize, rects: Vec<Rect4> },
     Edit { page: usize, annot: u32 },
+    /// A new text box of this size (left, bottom, right, top in PDF points).
+    TextBox { page: usize, rect: Rect4 },
 }
 
 pub struct NoteEditor {
@@ -160,6 +175,8 @@ pub enum Job {
     Text(Receiver<Result<Vec<(u32, String)>, String>>, u32, u32),
     Find(Receiver<Result<Vec<Rect4>, String>>, u32, usize),
     Search(Receiver<Result<Vec<FileHits>, String>>, u64),
+    FindRange(Receiver<Result<Vec<FindMatch>, String>>, u32, u64),
+    Outline(Receiver<Result<Vec<OutlineItem>, String>>, u32),
 }
 
 pub struct App {
@@ -192,6 +209,9 @@ pub struct App {
     pub focus_search: bool,
     pub open_seq: u64,
     pub view_rect: egui::Rect,
+    pub side_tab: nav::SideTab,
+    pub thumb_sink: Arc<Mutex<Vec<nav::ThumbDone>>>,
+    pub print_rx: Option<Receiver<String>>,
 
     // viewer
     pub doc: Option<Doc>,
@@ -214,6 +234,8 @@ pub struct App {
     pub updater: update::Updater,
     pub quit: bool,
     pub note_tool: bool,
+    /// The text-box tool: drag a rectangle on the page, then type.
+    pub box_tool: bool,
     pub editor: Option<NoteEditor>,
     pub seltool: Option<egui::Pos2>,
     pub message: String,
@@ -278,6 +300,9 @@ impl App {
             focus_search: false,
             open_seq: 0,
             view_rect: egui::Rect::NOTHING,
+            side_tab: nav::SideTab::Files,
+            thumb_sink: Arc::new(Mutex::new(Vec::new())),
+            print_rx: None,
             doc: None,
             tab_order: Vec::new(),
             background: HashMap::new(),
@@ -297,6 +322,7 @@ impl App {
             updater: update::Updater::new(),
             quit: false,
             note_tool: false,
+            box_tool: false,
             editor: None,
             seltool: None,
             message: "Choose a PDF from the sidebar, or press Ctrl+O.".into(),
@@ -385,6 +411,10 @@ impl App {
         if let Some(d) = &self.doc {
             self.settings.last_file = Some(d.path.clone());
             self.settings.last_page = Some(d.cur_page as u32);
+            let (path, page) = (d.path.clone(), d.cur_page as u32);
+            self.settings.positions.retain(|(p, _)| *p != path);
+            self.settings.positions.insert(0, (path, page));
+            self.settings.positions.truncate(300);
             let _ = settings::save(&self.dir, &self.settings);
         }
     }
@@ -424,6 +454,12 @@ impl App {
         let done: Vec<RenderDone> = std::mem::take(&mut *self.renders.lock().unwrap());
         for r in done {
             self.accept_render(r);
+        }
+
+        // finished thumbnails
+        let thumbs: Vec<nav::ThumbDone> = std::mem::take(&mut *self.thumb_sink.lock().unwrap());
+        for t in thumbs {
+            self.accept_thumb(t);
         }
 
         // jobs
@@ -470,6 +506,16 @@ impl App {
                     Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Search(rx, seq)),
                     Err(_) => {}
                 },
+                Job::FindRange(rx, doc, seq) => match rx.try_recv() {
+                    Ok(res) => self.finish_find_range(res, doc, seq),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::FindRange(rx, doc, seq)),
+                    Err(_) => {}
+                },
+                Job::Outline(rx, doc) => match rx.try_recv() {
+                    Ok(res) => self.finish_outline(res, doc),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.jobs.push(Job::Outline(rx, doc)),
+                    Err(_) => {}
+                },
             }
         }
 
@@ -488,6 +534,7 @@ impl App {
             self.remember();
         }
         self.poll_chats();
+        self.poll_print();
         self.poll_updates();
         self.maybe_load_annots();
         self.pump_selection();
@@ -517,6 +564,7 @@ impl App {
             || self.doc.as_ref().is_some_and(|d| !d.inflight.is_empty() || d.annots_at.is_some() || d.drag.is_some())
             || self.toast.is_some()
             || self.chat_busy()
+            || self.print_rx.is_some()
             || self.updater.busy()
     }
 }
@@ -537,6 +585,9 @@ impl eframe::App for App {
         }
         if !self.tab_order.is_empty() {
             egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
+        }
+        if self.doc.as_ref().is_some_and(|d| d.find.open) {
+            egui::Panel::top("findbar").show(ui, |ui| self.find_bar(ui));
         }
         let title = self.tab_title_for_window();
         if title != self.last_title {

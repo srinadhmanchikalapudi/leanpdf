@@ -2,6 +2,16 @@
 
 Each version's notes are shown inside the app (after an update, and in the update bar) and become the GitHub release notes. Add a `## x.y.z` section before publishing a version.
 
+## 0.5.0
+
+- **Find in this document** (Ctrl+F). Every match is highlighted on the pages; Enter or F3 goes to the next one and Shift+Enter to the previous one, with a count such as "3 of 17".
+- **Outline and Pages.** The left panel now has Files, Outline (the PDF's own bookmarks) and Pages (thumbnails) tabs. Click an entry or a thumbnail to jump there.
+- **Text boxes.** The new **Text box** button (or the T key) draws a text box: drag a rectangle on the page, then type. Text boxes from Acrobat can be edited too, and Acrobat shows the new text.
+- **Long comments are easy to save.** The comment window gets wider for long text, the text scrolls inside it, and Save and Cancel are always on screen. Long comments scroll inside their card in the Comments panel, so Edit, Copy and Delete stay in reach.
+- **Pick up where you left off.** The File menu lists your recent files, and a file you open again continues at the page you were reading.
+- **Rotate view** (Ctrl+R, or Ctrl+Shift+R the other way) turns the pages without changing the file, and **Print** (Ctrl+P) uses the standard Windows print dialog.
+- **One-click AI questions.** Ask AI has Summarize, Key points, Quiz me and Explain this page buttons above the question box.
+
 ## 0.4.4
 
 - **Page number on the page.** A small "Page 5 / 20" label floats over the bottom of the page view and updates as you scroll, so you always know where you are without looking up at the toolbar. Move it to the bottom right or top right, or turn it off, under Settings, Page number on the page.

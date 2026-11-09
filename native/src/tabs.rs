@@ -44,6 +44,7 @@ impl App {
         d.inflight.clear();
         d.sel = None;
         d.drag = None;
+        d.box_drag = None;
         if self.dirty {
             let (tx, rx) = channel();
             let _ = self.viewer.send(Cmd::Save { doc: d.id, reply: tx });
@@ -54,6 +55,7 @@ impl App {
         self.seltool = None;
         self.editor = None;
         self.note_tool = false;
+        self.box_tool = false;
         self.save_state.clear();
         self.background.insert(d.id, d);
     }
@@ -117,6 +119,7 @@ impl App {
             self.seltool = None;
             self.editor = None;
             self.note_tool = false;
+            self.box_tool = false;
             self.save_state.clear();
             let next = self.tab_order.get(pos).or_else(|| self.tab_order.get(pos.wrapping_sub(1))).copied();
             match next {

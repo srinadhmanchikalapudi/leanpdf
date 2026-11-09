@@ -129,6 +129,22 @@ pub struct Annot {
     pub rect: [f32; 4],
 }
 
+/// One entry of a PDF's outline (bookmarks), flattened in reading order.
+#[derive(Serialize, Clone, Debug)]
+pub struct OutlineItem {
+    pub title: String,
+    /// Zero-based page the entry points to, when it points to one in this document.
+    pub page: Option<u32>,
+    pub depth: u32,
+}
+
+/// One match of a search inside a document: the page and the boxes (one per line) it covers.
+#[derive(Serialize, Clone, Debug)]
+pub struct FindMatch {
+    pub page: u32,
+    pub rects: Vec<[f32; 4]>,
+}
+
 type Reply<T> = Sender<Result<T, String>>;
 
 pub enum EditOp {
@@ -150,9 +166,18 @@ pub enum Cmd {
     Open { path: String, reply: Reply<DocInfo> },
     Render { doc: u32, page: u32, width: u32, reply: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> },
     /// Same as `Render` but returns (width, height, RGBA bytes) for native UIs.
-    RenderRgba { doc: u32, page: u32, width: u32, reply: Box<dyn FnOnce(Result<(u32, u32, Vec<u8>), String>) + Send> },
+    /// `rot` is the number of clockwise quarter turns to show the page rotated by.
+    RenderRgba { doc: u32, page: u32, width: u32, rot: u8, reply: Box<dyn FnOnce(Result<(u32, u32, Vec<u8>), String>) + Send> },
     Annots { doc: u32, from: u32, to: u32, reply: Reply<Vec<Annot>> },
     Find { doc: u32, page: u32, terms: Vec<String>, reply: Reply<Vec<[f32; 4]>> },
+    /// Every match of `term` on pages `from..to` (the caller asks in chunks so renders stay responsive).
+    FindRange { doc: u32, term: String, from: u32, to: u32, reply: Reply<Vec<FindMatch>> },
+    /// The document's bookmarks.
+    Outline { doc: u32, reply: Reply<Vec<OutlineItem>> },
+    /// Replaces the text of a text-box comment (any pending edits are saved first).
+    EditTextBox { doc: u32, page: u32, annot: u32, text: String, reply: Reply<()> },
+    /// Adds a text box of the given size (left, bottom, right, top in PDF points); pending edits are saved first.
+    AddTextBox { doc: u32, page: u32, rect: [f32; 4], text: String, author: String, reply: Reply<()> },
     Select { doc: u32, page: u32, a: [f32; 2], b: [f32; 2], reply: Reply<edit::Selection> },
     Edit { doc: u32, op: EditOp, reply: Reply<()> },
     /// Writes pending edits to disk. Replies true if anything was written.
@@ -237,8 +262,22 @@ fn worker(rx: Receiver<Cmd>) {
                 Cmd::Render { doc, page, width, reply } => {
                     reply(with_doc(&docs, doc, |o| render_png(&o.doc, page, width)));
                 }
-                Cmd::RenderRgba { doc, page, width, reply } => {
-                    reply(with_doc(&docs, doc, |o| render_rgba(&o.doc, page, width)));
+                Cmd::RenderRgba { doc, page, width, rot, reply } => {
+                    reply(with_doc(&docs, doc, |o| render_rgba(&o.doc, page, width, rot)));
+                }
+                Cmd::FindRange { doc, term, from, to, reply } => {
+                    let _ = reply.send(with_doc(&docs, doc, |o| Ok(find_range(&o.doc, &term, from, to))));
+                }
+                Cmd::EditTextBox { doc, page, annot, text, reply } => {
+                    let r = rewrite_file(pdfium, &mut docs, doc, |bytes, now| crate::textbox::set_text_box_text(bytes, page, annot, &text, now));
+                    let _ = reply.send(r);
+                }
+                Cmd::AddTextBox { doc, page, rect, text, author, reply } => {
+                    let r = rewrite_file(pdfium, &mut docs, doc, |bytes, now| crate::textbox::add_text_box(bytes, page, rect, &text, &author, now));
+                    let _ = reply.send(r);
+                }
+                Cmd::Outline { doc, reply } => {
+                    let _ = reply.send(with_doc(&docs, doc, |o| Ok(outline(&o.doc))));
                 }
                 Cmd::Annots { doc, from, to, reply } => {
                     let _ = reply.send(with_doc(&docs, doc, |o| Ok(annotations(&o.doc, from, to))));
@@ -289,6 +328,63 @@ fn save_doc(pdfium: &'static Pdfium, docs: &mut HashMap<u32, Open>, id: u32) -> 
         docs.insert(id, o);
     }
     result
+}
+
+/// Appends an incremental update made by `make` (given the file's bytes and the current time as a PDF date),
+/// then replaces the file and reloads it, like a normal save. Pending comment edits are saved first.
+fn rewrite_file(pdfium: &'static Pdfium, docs: &mut HashMap<u32, Open>, id: u32, make: impl FnOnce(&[u8], &str) -> Result<Vec<u8>, String>) -> Result<(), String> {
+    save_doc(pdfium, docs, id)?; // pending comment edits go to disk first
+    let o = docs.remove(&id).ok_or("stale document")?;
+    let (path, from_file) = (o.path.clone(), o.from_file);
+    let original = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            docs.insert(id, o);
+            return Err(format!("could not read the file: {e}"));
+        }
+    };
+    let now = chrono::Utc::now().format("%Y%m%d%H%M%S+00'00'").to_string();
+    let out = match make(&original, &now).and_then(|out| ensure_appended_only(&path, &out).map(|_| out)) {
+        Ok(out) => out,
+        Err(e) => {
+            docs.insert(id, o);
+            return Err(e);
+        }
+    };
+    let tmp = format!("{path}.leanpdf-tmp");
+    if let Err(e) = std::fs::write(&tmp, &out) {
+        docs.insert(id, o);
+        return Err(format!("could not write {tmp}: {e}"));
+    }
+    let mut keep = Some(o);
+    if from_file {
+        keep = None; // streamed by PDFium: release before replacing
+    }
+    let mut replaced = Err(String::new());
+    for attempt in 0..4u64 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
+        }
+        replaced = std::fs::rename(&tmp, &path).map_err(|e| e.to_string());
+        if replaced.is_ok() {
+            break;
+        }
+    }
+    if let Err(e) = replaced {
+        let _ = std::fs::remove_file(&tmp);
+        let back = match keep {
+            Some(o) => Some(o),
+            None => load_document(pdfium, &path).ok().map(|doc| Open { id, doc, path: path.clone(), dirty: false, touched: Default::default(), from_file }),
+        };
+        if let Some(o) = back {
+            docs.insert(id, o);
+        }
+        return Err(format!("Could not replace the file (is it open in another program?): {e}"));
+    }
+    drop(keep);
+    let doc = load_document(pdfium, &path).map_err(|e| format!("saved, but reopening failed: {e}"))?;
+    docs.insert(id, Open { id, doc, path, dirty: false, touched: Default::default(), from_file });
+    Ok(())
 }
 
 fn apply_edit(doc: &PdfDocument<'static>, op: EditOp) -> Result<(), String> {
@@ -428,6 +524,10 @@ fn fail(cmd: Cmd, err: String) {
         Cmd::RenderRgba { reply, .. } => reply(Err(err)),
         Cmd::Annots { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Find { reply, .. } => drop(reply.send(Err(err))),
+        Cmd::FindRange { reply, .. } => drop(reply.send(Err(err))),
+        Cmd::Outline { reply, .. } => drop(reply.send(Err(err))),
+        Cmd::EditTextBox { reply, .. } => drop(reply.send(Err(err))),
+        Cmd::AddTextBox { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Select { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Edit { reply, .. } => drop(reply.send(Err(err))),
         Cmd::Save { reply, .. } => drop(reply.send(Err(err))),
@@ -443,13 +543,28 @@ fn with_doc<T>(docs: &HashMap<u32, Open>, id: u32, f: impl FnOnce(&Open) -> Resu
     }
 }
 
-fn render_rgba(doc: &PdfDocument<'static>, index: u32, width: u32) -> Result<(u32, u32, Vec<u8>), String> {
+fn render_rgba(doc: &PdfDocument<'static>, index: u32, width: u32, rot: u8) -> Result<(u32, u32, Vec<u8>), String> {
     let page = doc.pages().get(index as i32).map_err(|e| e.to_string())?;
     let width = width.clamp(100, 4000);
-    let cfg = PdfRenderConfig::new()
-        .set_target_width(width as i32)
-        .render_form_data(true)
-        .render_annotations(true);
+    let rotation = match rot % 4 {
+        1 => Some(PdfPageRenderRotation::Degrees90),
+        2 => Some(PdfPageRenderRotation::Degrees180),
+        3 => Some(PdfPageRenderRotation::Degrees270),
+        _ => None,
+    };
+    // The target width applies before turning. After a quarter turn the picture's width is the page's
+    // height, so ask for a width that makes the turned picture come out `width` pixels wide.
+    let turned_sideways = rot % 2 == 1;
+    let pre_width = if turned_sideways {
+        let (w, h) = (page.width().value.max(1.0), page.height().value.max(1.0));
+        ((width as f32) * w / h).round().max(1.0) as i32
+    } else {
+        width as i32
+    };
+    let mut cfg = PdfRenderConfig::new().set_target_width(pre_width).render_form_data(true).render_annotations(true);
+    if let Some(r) = rotation {
+        cfg = cfg.rotate(r, true);
+    }
     let bitmap = page.render_with_config(&cfg).map_err(|e| e.to_string())?;
     Ok((bitmap.width() as u32, bitmap.height() as u32, bitmap.as_rgba_bytes()))
 }
@@ -563,6 +678,58 @@ fn find_rects(doc: &PdfDocument<'static>, index: u32, terms: &[String]) -> Resul
         }
     }
     Ok(out)
+}
+
+fn find_range(doc: &PdfDocument<'static>, term: &str, from: u32, to: u32) -> Vec<FindMatch> {
+    let mut out = Vec::new();
+    if term.trim().is_empty() {
+        return out;
+    }
+    let count = doc.pages().len() as u32;
+    for index in from..to.min(count) {
+        let Ok(page) = doc.pages().get(index as i32) else { continue };
+        let Ok(text) = page.text() else { continue };
+        let Ok(search) = text.search(term, &PdfSearchOptions::new()) else { continue };
+        for group in search.iter(PdfSearchDirection::SearchForward) {
+            let rects: Vec<[f32; 4]> = group
+                .iter()
+                .map(|seg| {
+                    let b = seg.bounds();
+                    [b.left().value, b.bottom().value, b.right().value, b.top().value]
+                })
+                .collect();
+            if !rects.is_empty() {
+                out.push(FindMatch { page: index, rects });
+            }
+            if out.len() >= 5000 {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+fn outline(doc: &PdfDocument<'static>) -> Vec<OutlineItem> {
+    fn walk(first: Option<PdfBookmark<'_>>, depth: u32, out: &mut Vec<OutlineItem>) {
+        let mut cur = first;
+        while let Some(b) = cur {
+            if out.len() >= 5000 {
+                return;
+            }
+            let title = b.title().unwrap_or_default().trim().to_string();
+            let page = b.destination().and_then(|d| d.page_index().ok()).map(|p| p as u32);
+            if !title.is_empty() {
+                out.push(OutlineItem { title, page, depth });
+            }
+            if depth < 12 {
+                walk(b.first_child(), depth + 1, out);
+            }
+            cur = b.next_sibling();
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc.bookmarks().root(), 0, &mut out);
+    out
 }
 
 fn page_texts(doc: &PdfDocument<'static>, from: u32, to: u32) -> Vec<(u32, String)> {
